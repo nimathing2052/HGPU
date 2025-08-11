@@ -13,11 +13,11 @@ This guide will help you deploy the Hertie GPU Server Automation Flask App to Ra
 ### 1. **Prepare Your Repository**
 
 Your repository should already contain all necessary files:
-- ✅ `Procfile` - Tells Railway how to run the app
-- ✅ `runtime.txt` - Specifies Python version
+- ✅ `Dockerfile` - Container configuration for Railway
 - ✅ `railway.json` - Railway configuration
-- ✅ `nixpacks.toml` - Build configuration
 - ✅ `requirements.txt` - Python dependencies
+- ✅ `Procfile` - Alternative startup method
+- ✅ `runtime.txt` - Python version specification
 
 ### 2. **Deploy to Railway**
 

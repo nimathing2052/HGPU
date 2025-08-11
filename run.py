@@ -103,12 +103,8 @@ def main():
         # Import and run the Flask app
         from app import app
         
-        # Get port from config
-        try:
-            from config import FLASK_PORT
-            port = FLASK_PORT
-        except ImportError:
-            port = 2344
+        # Get port from environment (Railway) or config
+        port = int(os.getenv('PORT', 2344))
         
         print(f"📡 Server will be available at: http://localhost:{port}")
         print("🛑 Press Ctrl+C to stop the server\n")
