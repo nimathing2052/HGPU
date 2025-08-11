@@ -12,8 +12,8 @@ FLASK_PORT = 2344
 FLASK_DEBUG = False
 
 # Port Configuration
-LOCAL_PORT_RANGE = (9000, 9099)  # Range for local port forwarding
-DYNAMIC_PORT_RANGE = (2344, 2400)  # Range for dynamic Flask port allocation
+LOCAL_PORT_RANGE = range(9000, 9100)  # Range for local port forwarding
+DYNAMIC_PORT_RANGE = range(2344, 2400)  # Range for dynamic Flask port allocation
 
 # Framework Versions
 FRAMEWORK_VERSIONS = {

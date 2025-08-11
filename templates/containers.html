@@ -459,7 +459,7 @@
             <div style="display: flex; justify-content: space-between; align-items: center;">
                 <div>
                     <h1>📦 Container Management</h1>
-                    <p>Manage your GPU containers and launch Jupyter sessions</p>
+                    <p>Manage your GPU containers and launch VS Code sessions</p>
                 </div>
                 <div style="display: flex; gap: 10px; align-items: center;">
                     <div id="session-info" style="background: rgba(255,255,255,0.2); padding: 10px; border-radius: 8px; font-size: 0.9em;">
@@ -767,13 +767,13 @@
                             `<button class="btn" onclick="startContainer('${container.name}')">▶️ Start</button>`
                         }
                         <button class="btn btn-secondary" onclick="openContainer('${container.name}')">🔧 Open Shell</button>
-                        <button class="btn btn-danger" onclick="stopContainer('${container.name}')">🛑 Stop</button>
+                                                    <button class="btn btn-danger" onclick="removeContainer('${container.name}')">🗑️ Remove</button>
                     </div>
                 </div>
             `).join('');
         }
 
-        async function launchJupyter(containerName) {
+        async function launchJupyter(containerName) { // Function name kept for compatibility
             // Show progress modal
             showProgressModal();
             
@@ -818,14 +818,14 @@
                 
                 if (result.success) {
                     const jupyterUrl = result.jupyter_url;
-                    const token = result.token;
                     
-                    let alertMessage = `JupyterLab launched successfully! <a href="${jupyterUrl}" target="_blank" class="btn btn-success" style="margin-left: 10px;">🌐 Open JupyterLab</a>`;
+                    let alertMessage = `Jupyter Notebook launched successfully! <a href="${jupyterUrl}" target="_blank" class="btn btn-success" style="margin-left: 10px;">🌐 Open Jupyter</a>`;
                     
                     alertMessage += `
                     <div style="margin-top: 15px; padding: 10px; background: #d4edda; border-radius: 5px; border-left: 4px solid #28a745;">
                         <strong>✅ No Authentication Required:</strong> 
-                        <br><small style="color: #155724;">JupyterLab is running without token or password authentication. You can access it directly!</small>
+                        <br><small style="color: #155724;">Jupyter is running without authentication. You can access it directly!</small>
+                        <br><small style="color: #155724;">💡 Tip: Create new notebooks or upload existing ones.</small>
                     </div>`;
                     
                     showAlert(alertMessage, 'success');
@@ -838,7 +838,7 @@
             } catch (error) {
                 hideProgressModal();
                 updateProgressStep(`❌ Network Error: ${error.message}`, 'error');
-                showAlert('Error launching Jupyter: ' + error.message, 'error');
+                showAlert('Error launching VS Code: ' + error.message, 'error');
             }
         }
 
@@ -868,13 +868,20 @@
             }
         }
 
-        async function stopContainer(containerName) {
-            if (!confirm(`Are you sure you want to stop container "${containerName}"?`)) {
+        async function removeContainer(containerName) {
+            if (!confirm(`Are you sure you want to remove container "${containerName}"? This action cannot be undone.`)) {
                 return;
             }
             
+            // Show loading state
+            const button = event.target;
+            const originalText = button.textContent;
+            button.textContent = '⏳ Removing...';
+            button.disabled = true;
+            button.style.background = '#ffc107';
+            
             try {
-                const response = await fetch('/stop-container', {
+                const response = await fetch('/remove-container', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -888,13 +895,18 @@
                 const result = await response.json();
                 
                 if (result.success) {
-                    showAlert('Container stopped successfully!', 'success');
+                    showAlert('✅ Container removed successfully!', 'success');
                     loadContainers(); // Refresh the list
                 } else {
-                    showAlert(result.message, 'error');
+                    showAlert('❌ ' + result.message, 'error');
                 }
             } catch (error) {
-                showAlert('Error stopping container: ' + error.message, 'error');
+                showAlert('❌ Error removing container: ' + error.message, 'error');
+            } finally {
+                // Restore button state
+                button.textContent = originalText;
+                button.disabled = false;
+                button.style.background = '';
             }
         }
 
@@ -959,7 +971,7 @@
             progressSteps.innerHTML = '';
             
             // Add initial step
-            addProgressStep('🚀 Starting JupyterLab launch process...', 'pending');
+            addProgressStep('🚀 Starting VS Code (code-server) launch process...', 'pending');
             
             modal.style.display = 'block';
         }
@@ -1001,7 +1013,7 @@
     <div id="progressModal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
-                <h3>🚀 Launching JupyterLab</h3>
+                <h3>🚀 Launching VS Code (code-server)</h3>
                 <span class="close" onclick="hideProgressModal()">&times;</span>
             </div>
             <div class="modal-body">

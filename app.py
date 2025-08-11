@@ -1,3 +1,4 @@
+
 #!/usr/bin/env python3
 """
 Hertie GPU Server Automation Flask App
@@ -132,21 +133,44 @@ class GPUServerManager:
             print(f"❌ SSH connection failed: {type(e).__name__}: {str(e)}")
             return False, f"SSH connection failed: {str(e)}"
     
-    def execute_command(self, command):
-        """Execute command on the remote server"""
+    def _run(self, cmd: str, *, login_shell: bool = True, get_pty: bool = False, timeout: int = 120, interactive_input: str = None):
+        """Execute command with proper shell handling and keepalive"""
         if not self.ssh_client:
-            return False, "No SSH connection established"
+            return False, "No SSH connection"
         
-        try:
-            stdin, stdout, stderr = self.ssh_client.exec_command(command)
-            output = stdout.read().decode('utf-8')
-            error = stderr.read().decode('utf-8')
+        # Set keepalive on transport
+        t = self.ssh_client.get_transport()
+        if t: 
+            t.set_keepalive(30)
+        
+        # Ensure PATH is loaded properly
+        if login_shell:
+            # Use login shell with proper quoting
+            full = f"bash -lc {json.dumps(cmd)}"
+        else:
+            full = cmd
             
-            if error:
-                return False, f"Command error: {error}"
-            return True, output
-        except Exception as e:
-            return False, f"Command execution failed: {str(e)}"
+        # For interactive commands, we need a pseudo-terminal
+        if interactive_input:
+            get_pty = True
+            
+        stdin, stdout, stderr = self.ssh_client.exec_command(full, get_pty=get_pty, timeout=timeout)
+        
+        # Handle interactive input if provided
+        if interactive_input and stdin:
+            stdin.write(interactive_input + '\n')
+            stdin.flush()
+        
+        out = stdout.read().decode("utf-8", errors="ignore")
+        err = stderr.read().decode("utf-8", errors="ignore")
+        code = stdout.channel.recv_exit_status()
+        if code != 0:
+            return False, err or out
+        return True, out
+
+    def execute_command(self, command, interactive_input=None):
+        """Execute command on the remote server"""
+        return self._run(command, login_shell=True, interactive_input=interactive_input)[0:2]
     
     def check_container_exists(self, container_name):
         """Check if container exists"""
@@ -202,138 +226,182 @@ class GPUServerManager:
         least_loaded = min(gpus, key=lambda x: (x['utilization'], x['memory_used']))
         return least_loaded['id']
 
-    def start_jupyter(self, container_name, port):
-        """Start JupyterLab in container using tmux; auth disabled"""
+    def start_jupyter(self, container_name, _ignored_port):
+        """Start JupyterLab in container using tmux; auth disabled, robust"""
+        import json
+        import re
         try:
-            print(f"🚀 Starting Jupyter in container: {container_name}")
-
-            # Stop any running jupyter
-            self.execute_command("pkill -f jupyter || true")
+            # ensure container
+            self.execute_command(f"/opt/aime-ml-containers/mlc-start {container_name}")
             time.sleep(1)
 
-            # Ensure container is up
-            self.execute_command(f"/opt/aime-ml-containers/mlc-start {container_name}")
-            time.sleep(2)
-
-            # Get container id
             ok, container_id = self.execute_command(
                 f"docker ps --filter 'name={container_name}' --format '{{{{.ID}}}}'"
             )
             if not ok or not container_id.strip():
-                return False, f"Could not find container ID for {container_name}", None
-            container_id = container_id.strip()
+                return False, "Container not found", None, None
+            cid = container_id.strip()
 
-            # pick GPU (best-effort)
-            ok, gpu_output = self.execute_command(
-                f"docker exec {container_id} bash -lc "
-                f"'nvidia-smi --query-gpu=index,utilization.gpu --format=csv,noheader,nounits | "
-                f"sort -t, -k2 -n | head -1 | cut -d, -f1'"
+            # Create script using base64 encoding to avoid quoting issues
+            script_content = '''#!/usr/bin/env bash
+set -euo pipefail
+cd /workspace || { mkdir -p /workspace; cd /workspace; }
+export HOME=/workspace
+export JUPYTER_RUNTIME_DIR=/workspace/.jupyter/runtime
+export JUPYTER_DATA_DIR=/workspace/.jupyter
+export JUPYTER_CONFIG_DIR=/workspace/.jupyter
+mkdir -p "$JUPYTER_RUNTIME_DIR" "$JUPYTER_CONFIG_DIR"
+export JUPYTER_TOKEN=''
+export JUPYTER_PASSWORD=''
+echo 'c = get_config(); c.NotebookApp.token=""; c.NotebookApp.password=""' > /workspace/.jupyter/jupyter_notebook_config.py
+exec jupyter notebook --no-browser --ip=0.0.0.0 --port=8888 --allow-root --NotebookApp.token='' --NotebookApp.password=''
+'''
+            
+            # Encode script content to base64
+            import base64
+            script_encoded = base64.b64encode(script_content.encode()).decode()
+            
+            # Write script using base64 decode
+            ok, _ = self.execute_command(f"docker exec {cid} bash -c 'echo {script_encoded} | base64 -d > /workspace/start_jlab.sh'")
+            if not ok: return False, "Failed to write script content", None, None
+            
+            # Make executable
+            ok, _ = self.execute_command(f"docker exec {cid} bash -c 'chmod +x /workspace/start_jlab.sh'")
+            if not ok: return False, "Failed to make script executable", None, None
+
+            # run via tmux (robust) or background
+            ok, out = self.execute_command(
+                f"docker exec {cid} bash -lc "
+                "\"if command -v tmux >/dev/null 2>&1; then "
+                "S=jup-$(hostname)-$RANDOM; tmux new-session -d -s $S '/workspace/start_jlab.sh'; echo tmux_ok; "
+                "else echo tmux_missing; fi\""
             )
-            gpu_id = gpu_output.strip() if ok and gpu_output.strip() else "0"
+            if not ok: return False, out, None, None
+            if "tmux_missing" in out:
+                ok, out = self.execute_command(f"docker exec -d {cid} bash -lc \"/workspace/start_jlab.sh > /workspace/jupyter.log 2>&1\"")
+                if not ok: return False, out, None, None
 
-            venv = "nimaenv"
-            # Write a startup script inside container via heredoc to avoid quoting hell
-            start_script = rf"""#!/usr/bin/env bash
-    set -e
-    cd /workspace || (mkdir -p /workspace && cd /workspace)
+            # Wait longer for Jupyter to start
+            time.sleep(5)
+            
 
-    # venv
-    [ -d {venv} ] || python3 -m venv {venv}
-    . {venv}/bin/activate
 
-    # env
-    export HOME=/workspace
-    export JUPYTER_RUNTIME_DIR=/workspace/.jupyter/runtime
-    export JUPYTER_DATA_DIR=/workspace/.jupyter
-    export JUPYTER_CONFIG_DIR=/workspace/.jupyter
-    mkdir -p "$JUPYTER_RUNTIME_DIR"
-
-    python -m pip install -U pip
-    python -m pip install jupyterlab ipykernel
-
-    export CUDA_VISIBLE_DEVICES={gpu_id}
-
-    # Start JupyterLab with auth disabled
-    exec jupyter lab \
-    --no-browser \
-    --ip=0.0.0.0 \
-    --port={port} \
-    --ServerApp.token='' \
-    --ServerApp.password='' \
-    --allow-root
-    """
-            # Drop the script and make it executable
-            put_script_cmd = (
-                f"docker exec {container_id} bash -lc "
-                f"\"cat > /workspace/start_jlab.sh << 'EOF'\n{start_script}\nEOF\nchmod +x /workspace/start_jlab.sh\""
+            # find actual port and url (no token)
+            ok, info = self.execute_command(
+                f"docker exec {cid} bash -c 'cd /workspace && . nimaenv/bin/activate && "
+                "jupyter server list --json 2>/dev/null || jupyter lab list --json 2>/dev/null'"
             )
-            ok, out = self.execute_command(put_script_cmd)
-            if not ok:
-                return False, f"Failed to write startup script: {out}", None
+            if not ok or not info.strip():
+                # Try alternative approach - check if jupyter is running
+                ok, ps_output = self.execute_command(f"docker exec {cid} bash -c 'ps aux | grep jupyter'")
+                if ok and 'jupyter' in ps_output:
+                    # Jupyter is running but we can't get the list, try to find port manually
+                    ok, netstat = self.execute_command(f"docker exec {cid} bash -c 'netstat -tlnp 2>/dev/null | grep jupyter || ss -tlnp 2>/dev/null | grep jupyter'")
+                    if ok and netstat.strip():
+                        # Extract port from netstat output
+                        import re
+                        port_match = re.search(r':(\d+)', netstat)
+                        if port_match:
+                            actual_port = int(port_match.group(1))
+                            # Get container IP
+                            ok, ip_out = self.execute_command(
+                                f"docker inspect -f '{{{{range.NetworkSettings.Networks}}}}{{{{.IPAddress}}}}{{{{end}}}}' {cid}"
+                            )
+                            if ok and ip_out.strip():
+                                return True, f"JupyterLab up (no token)", None, {"port": actual_port, "ip": ip_out.strip()}
+                    
+                    # If netstat didn't work, try parsing the log file
+                    ok, log_output = self.execute_command(f"docker exec {cid} bash -c 'tail -20 /workspace/jupyter.log'")
+                    if ok and log_output.strip():
+                        # Look for port in the log
+                        import re
+                        # First try to find a specific port
+                        port_match = re.search(r'http://[^:]+:(\d+)/', log_output)
+                        if port_match and port_match.group(1) != '0':
+                            actual_port = int(port_match.group(1))
+                            # Get container IP - try multiple approaches
+                            ok, ip_out = self.execute_command(
+                                f"docker inspect -f '{{{{range.NetworkSettings.Networks}}}}{{{{.IPAddress}}}}{{{{end}}}}' {cid}"
+                            )
+                            if not ok or not ip_out.strip():
+                                # Try alternative approach
+                                ok, ip_out = self.execute_command(
+                                    f"docker inspect {cid} | grep -A 10 'NetworkSettings' | grep 'IPAddress' | head -1 | cut -d'\"' -f4"
+                                )
+                            
+                            if ok and ip_out.strip():
+                                return True, f"JupyterLab up (no token)", None, {"port": actual_port, "ip": ip_out.strip()}
+                            else:
+                                # Use localhost as fallback
+                                return True, f"JupyterLab up (no token)", None, {"port": actual_port, "ip": "localhost"}
+                        else:
+                            # If port is 0, try to find the actual port from ss
+                            ok, ss_output = self.execute_command(f"docker exec {cid} bash -c 'ss -tlnp 2>/dev/null | grep python3'")
+                            if ok and ss_output.strip():
+                                port_match = re.search(r':(\d+)\s', ss_output)
+                                if port_match:
+                                    actual_port = int(port_match.group(1))
+                                else:
+                                    return False, "Could not determine actual port", None, None
+                            else:
+                                # Try lsof as last resort
+                                ok, lsof_output = self.execute_command(f"docker exec {cid} bash -c 'lsof -i -P -n 2>/dev/null | grep python3'")
+                                if ok and lsof_output.strip():
+                                    port_match = re.search(r':(\d+)', lsof_output)
+                                    if port_match:
+                                        actual_port = int(port_match.group(1))
+                                    else:
+                                        return False, "Could not determine actual port", None, None
+                                else:
+                                    return False, "Could not find Jupyter port", None, None
+                            # Get container IP
+                            ok, ip_out = self.execute_command(
+                                f"docker inspect -f '{{{{range.NetworkSettings.Networks}}}}{{{{.IPAddress}}}}{{{{end}}}}' {cid}"
+                            )
+                            if ok and ip_out.strip():
+                                return True, f"JupyterLab up (no token)", None, {"port": actual_port, "ip": ip_out.strip()}
+                
+                return False, "Could not read jupyter server list", None, None
 
-            # Try tmux; fall back to background
-            tmux_sess = re.sub(r'[^A-Za-z0-9_.-]', '-', f"jup-{container_name}-{port}")
-            run_tmux_cmd = (
-                f"docker exec {container_id} bash -lc "
-                f"\"if command -v tmux >/dev/null 2>&1; then "
-                f"tmux has-session -t {tmux_sess} 2>/dev/null && tmux kill-session -t {tmux_sess} || true; "
-                f"tmux new-session -d -s {tmux_sess} '/workspace/start_jlab.sh'; "
-                f"echo tmux_ok; "
-                f"else echo tmux_missing; fi\""
+            # parse port from JSON lines (avoid jq)
+            actual_port = None
+            for line in info.splitlines():
+                try:
+                    obj = json.loads(line)
+                    actual_port = int(obj.get('port')) if obj.get('port') else None
+                    if actual_port: break
+                except:  # not json
+                    m = re.search(r':(\d+)', line)
+                    if m: actual_port = int(m.group(1)); break
+            if not actual_port:
+                return False, f"Could not parse port from: {info}", None, None
+
+            # container IP
+            ok, ip_out = self.execute_command(
+                f"docker inspect -f '{{{{range.NetworkSettings.Networks}}}}{{{{.IPAddress}}}}{{{{end}}}}' {cid}"
             )
-            ok, out = self.execute_command(run_tmux_cmd)
-            if ok and "tmux_ok" in out:
-                # Confirm it’s up
-                time.sleep(2)
-                return True, f"JupyterLab started on port {port} in tmux session {tmux_sess} (auth disabled)", None
+            if not ok or not ip_out.strip():
+                return False, "Could not determine container IP", None, None
 
-            # Fallback: background process
-            bg_cmd = (
-                f"docker exec -d {container_id} bash -lc "
-                f"\"/workspace/start_jlab.sh > /workspace/jupyter.log 2>&1\""
-            )
-            ok, out = self.execute_command(bg_cmd)
-            if not ok:
-                return False, f"Failed to start JupyterLab: {out}", None
-
-            time.sleep(2)
-            # Quick check
-            ok, ps = self.execute_command(
-                f"docker exec {container_id} bash -lc \"pgrep -fa 'jupyter.*lab' || true\""
-            )
-            if ok and ps.strip():
-                return True, f"JupyterLab started on port {port} (auth disabled)", None
-            return False, f"JupyterLab not found running: {ps}", None
-
+            return True, f"JupyterLab up (no token)", None, {"port": actual_port, "ip": ip_out.strip()}
         except Exception as e:
-            return False, f"Error starting Jupyter: {e}", None
+            return False, f"Error starting Jupyter: {e}", None, None
+
 
     
-    def setup_port_forwarding(self, remote_port, local_port):
+    def setup_port_forwarding(self, remote_host, remote_port, local_port):
         """Set up SSH tunnel for port forwarding"""
-        try:
-            # Kill any existing tunnel on this port
-            subprocess.run(f"lsof -ti:{local_port} | xargs kill -9", shell=True, capture_output=True)
-            
-            # Create SSH tunnel with password authentication
-            # Using sshpass to provide password non-interactively
-            tunnel_cmd = f"sshpass -p '{self.password}' ssh -f -N -L {local_port}:localhost:{remote_port} {self.email}@{SERVER_HOST}"
-            print(f"🔗 Creating SSH tunnel: {tunnel_cmd}")
-            
-            # Execute the tunnel command
-            result = subprocess.run(tunnel_cmd, shell=True, capture_output=True, text=True, encoding='utf-8')
-            
-            if result.returncode == 0:
-                print(f"✅ SSH tunnel established successfully")
-                print(f"result: {result.stdout}")
-                return True, f"Port forwarding established: localhost:{local_port} -> server:{remote_port}, result: {result.stdout}"
-            else:
-                print(f"❌ SSH tunnel failed: {result.stderr}")
-                return False, f"Failed to establish port forwarding: {result.stderr}"
-                
-        except Exception as e:
-            print(f"❌ SSH tunnel exception: {str(e)}")
-            return False, f"Port forwarding failed: {str(e)}"
+        subprocess.run(f"lsof -ti:{local_port} | xargs kill -9", shell=True, capture_output=True)
+        cmd = (
+            f"sshpass -p '{self.password}' ssh -f -N "
+            f"-o ExitOnForwardFailure=yes -o ServerAliveInterval=30 "
+            f"-L {local_port}:{remote_host}:{remote_port} "
+            f"{self.email}@{SERVER_HOST}"
+        )
+        res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        if res.returncode != 0:
+            return False, res.stderr
+        return True, f"localhost:{local_port} → {remote_host}:{remote_port}"
     
     def cleanup(self):
         """Clean up SSH connection and tunnel"""
@@ -369,7 +437,7 @@ class GPUServerManager:
             except Exception as e:
                 print(f"⚠️ Error cleaning up local port {self.local_port}: {e}")
     
-    def stop_jupyter(self, container_name, port):
+    def stop_jupyter(self, container_name, _ignored_port=None):
         """Stop JupyterLab session using tmux"""
         try:
             print(f"🛑 Stopping JupyterLab in container: {container_name}")
@@ -381,18 +449,17 @@ class GPUServerManager:
                 return False, f"Could not find container ID for {container_name}"
             
             container_id = container_id.strip()
-            tmux_session = f"jup-{container_name}-{port}"
             
-            # Kill tmux session
-            stop_cmd = f"docker exec {container_id} bash -c 'tmux has-session -t {tmux_session} 2>/dev/null && tmux kill-session -t {tmux_session} && echo \"Session killed\" || echo \"Session not found\"'"
+            # Kill all tmux sessions for this container
+            stop_cmd = f"docker exec {container_id} bash -c 'tmux list-sessions 2>/dev/null | grep jup-{container_name} | cut -d: -f1 | xargs -I {{}} tmux kill-session -t {{}} && echo \"Sessions killed\" || echo \"No sessions found\"'"
             success, output = self.execute_command(stop_cmd)
             
-            if success and "Session killed" in output:
-                print(f"✅ JupyterLab session stopped: {tmux_session}")
-                return True, f"JupyterLab session stopped: {tmux_session}"
+            if success and "Sessions killed" in output:
+                print(f"✅ JupyterLab sessions stopped for container: {container_name}")
+                return True, f"JupyterLab sessions stopped for container: {container_name}"
             else:
-                print(f"⚠️ Session not found or already stopped: {tmux_session}")
-                return True, f"JupyterLab session already stopped: {tmux_session}"
+                print(f"⚠️ No sessions found or already stopped for container: {container_name}")
+                return True, f"JupyterLab sessions already stopped for container: {container_name}"
                 
         except Exception as e:
             print(f"❌ Error stopping Jupyter: {str(e)}")
@@ -694,9 +761,9 @@ def start_container():
     
     return jsonify({'success': True, 'message': 'Container started successfully'})
 
-@app.route('/stop-container', methods=['POST'])
-def stop_container():
-    """Stop a container"""
+@app.route('/remove-container', methods=['POST'])
+def remove_container():
+    """Remove a container"""
     data = request.get_json()
     session_id = data.get('session_id')
     container_name = data.get('container_name')
@@ -707,11 +774,23 @@ def stop_container():
     session = active_sessions[session_id]
     manager = session['manager']
     
-    success, message = manager.execute_command(f"/opt/aime-ml-containers/mlc-stop {container_name} -Y")
-    if not success:
-        return jsonify({'success': False, 'message': f'Failed to stop container: {message}'})
+    # First stop the container if it's running
+    print(f"🛑 Stopping container {container_name} before removal...")
+    stop_success, stop_message = manager.execute_command(f"/opt/aime-ml-containers/mlc-stop {container_name} -Y")
+    if not stop_success:
+        print(f"⚠️ Warning: Failed to stop container: {stop_message}")
+        # Continue anyway, maybe it's already stopped
     
-    return jsonify({'success': True, 'message': 'Container stopped successfully'})
+    # Wait a moment for the stop to take effect
+    time.sleep(2)
+    
+    # Now remove the container with interactive confirmation
+    print(f"🗑️ Removing container {container_name}...")
+    success, message = manager.execute_command(f"/opt/aime-ml-containers/mlc-remove {container_name}", interactive_input="Y")
+    if not success:
+        return jsonify({'success': False, 'message': f'Failed to remove container: {message}'})
+    
+    return jsonify({'success': True, 'message': 'Container removed successfully'})
 
 @app.route('/launch-jupyter', methods=['POST'])
 def launch_jupyter():
@@ -739,22 +818,24 @@ def launch_jupyter():
     print(f"✅ Found available local port: {local_port}")
     
     # Start Jupyter in container with proper workflow
-    # Use port in range 9000-9099 as per documentation
-    jupyter_port = 9090  # Default port
     print(f"🚀 Launching Jupyter for container: {container_name}")
-    success, message, token = manager.start_jupyter(container_name, jupyter_port)
+    success, message, token, meta = manager.start_jupyter(container_name, 0)
     if not success:
         return jsonify({'success': False, 'message': f'Failed to start Jupyter: {message}'})
-    
-    # Setup port forwarding
-    print(f"🔗 Setting up port forwarding: localhost:{local_port} -> server:{jupyter_port}")
-    success, message = manager.setup_port_forwarding(jupyter_port, local_port)
+
+    actual_port = meta['port']; container_ip = meta['ip']
+    success, msg = manager.setup_port_forwarding(container_ip, actual_port, local_port)
     if not success:
-        return jsonify({'success': False, 'message': f'Port forwarding failed: {message}'})
+        return jsonify({'success': False, 'message': f'Port forwarding failed: {msg}'})
     
     jupyter_url = f"http://localhost:{local_port}"
     
     print(f"✅ Jupyter successfully launched at: {jupyter_url}")
+    
+    # Update session info with actual port and container IP
+    session['jupyter_port'] = actual_port
+    session['container_ip'] = container_ip
+    session['local_port'] = local_port
     
     return jsonify({
         'success': True,
@@ -809,7 +890,6 @@ def setup_gpu_session():
         container_name = request.form.get('container_name')
         framework = request.form.get('framework')
         version = request.form.get('version')
-        jupyter_port = int(request.form.get('jupyter_port', 9090))
         
         # Validate inputs
         if not all([email, password, container_name, framework, version]):
@@ -841,7 +921,7 @@ def setup_gpu_session():
             return jsonify({'success': False, 'message': f'Container opening failed: {message}'})
         
         # Step 4: Start Jupyter
-        success, message, token = manager.start_jupyter(container_name, jupyter_port)
+        success, message, token, meta = manager.start_jupyter(container_name, 0)
         if not success:
             manager.cleanup()
             return jsonify({'success': False, 'message': f'Jupyter startup failed: {message}'})
@@ -852,7 +932,8 @@ def setup_gpu_session():
             manager.cleanup()
             return jsonify({'success': False, 'message': 'No available local ports for forwarding'})
         
-        success, message = manager.setup_port_forwarding(jupyter_port, local_port)
+        actual_port = meta['port']; container_ip = meta['ip']
+        success, message = manager.setup_port_forwarding(container_ip, actual_port, local_port)
         if not success:
             manager.cleanup()
             return jsonify({'success': False, 'message': f'Port forwarding failed: {message}'})
@@ -861,7 +942,8 @@ def setup_gpu_session():
         active_sessions[session_id] = {
             'manager': manager,
             'container_name': container_name,
-            'jupyter_port': jupyter_port,
+            'jupyter_port': actual_port,
+            'container_ip': container_ip,
             'local_port': local_port,
             'email': email,
             'created_at': time.time()
