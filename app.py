@@ -9,9 +9,11 @@ import subprocess
 import threading
 import time
 import sys
+import signal
+import atexit
+import json
 from flask import Flask, render_template, request, jsonify, redirect, url_for
 import paramiko
-import json
 import re
 
 app = Flask(__name__)
@@ -30,6 +32,51 @@ except ImportError:
 
 # Store active sessions (in production, use Redis or similar)
 active_sessions = {}
+
+def cleanup_all_ports():
+    """Clean up all SSH tunnels and processes on local ports"""
+    print(f"🧹 Global port cleanup initiated...")
+    
+    try:
+        # Kill all SSH processes that might be using our port range
+        port_range = LOCAL_PORT_RANGE
+        for port in port_range:
+            cleanup_cmd = f"lsof -ti:{port} | xargs kill -9 2>/dev/null || true"
+            result = subprocess.run(cleanup_cmd, shell=True, capture_output=True, text=True)
+            if result.returncode == 0 and result.stdout.strip():
+                print(f"✅ Cleaned up port {port}")
+        
+        # Also kill any ssh processes that might be hanging
+        ssh_cleanup = "pkill -f 'ssh.*-L.*localhost' 2>/dev/null || true"
+        subprocess.run(ssh_cleanup, shell=True, capture_output=True)
+        print(f"✅ Cleaned up SSH tunnel processes")
+        
+    except Exception as e:
+        print(f"⚠️ Error during global port cleanup: {e}")
+
+def signal_handler(signum, frame):
+    """Handle shutdown signals"""
+    print(f"\n🛑 Received signal {signum}, cleaning up...")
+    cleanup_all_ports()
+    
+    # Clean up all active sessions
+    for session_id, session in list(active_sessions.items()):
+        try:
+            manager = session['manager']
+            manager.cleanup()
+        except Exception as e:
+            print(f"⚠️ Error cleaning up session {session_id}: {e}")
+    
+    active_sessions.clear()
+    print(f"✅ Cleanup completed, exiting...")
+    sys.exit(0)
+
+# Register signal handlers for graceful shutdown
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
+
+# Register cleanup function to run on exit
+atexit.register(cleanup_all_ports)
 
 def cleanup_expired_sessions():
     """Clean up expired sessions"""
@@ -154,126 +201,113 @@ class GPUServerManager:
         # Find GPU with lowest utilization and memory usage
         least_loaded = min(gpus, key=lambda x: (x['utilization'], x['memory_used']))
         return least_loaded['id']
-    
+
     def start_jupyter(self, container_name, port):
-        """Start Jupyter notebook in container following proper workflow"""
+        """Start JupyterLab in container using tmux; auth disabled"""
         try:
             print(f"🚀 Starting Jupyter in container: {container_name}")
-            
-            # Step 1: Stop any currently running jupyter notebook
-            print("🛑 Step 1: Stopping any running Jupyter processes...")
-            stop_cmd = "pkill -f jupyter"
-            self.execute_command(stop_cmd)
-            time.sleep(2)  # Wait for processes to stop
-            
-            # Step 2: Start the container (if not already running)
-            print(f"📦 Step 2: Starting container: {container_name}")
-            start_cmd = f"/opt/aime-ml-containers/mlc-start {container_name}"
-            success, output = self.execute_command(start_cmd)
-            if not success:
-                print(f"⚠️ Container start warning: {output}")
-            time.sleep(3)  # Wait for container to fully start
-            
-            # Step 3: Get container ID
-            print("🔍 Step 3: Finding container ID...")
-            container_id_cmd = f"docker ps --filter 'name={container_name}' --format '{{{{.ID}}}}'"
-            success, container_id = self.execute_command(container_id_cmd)
-            if not success or not container_id.strip():
-                return False, f"Could not find container ID for {container_name}", None
-            
-            container_id = container_id.strip()
-            print(f"🔍 Found container ID: {container_id}")
-            
-            # Step 4: Setup workspace and environment step by step
-            print("📁 Step 4: Setting up workspace and environment...")
-            
-            # First, check if workspace exists and create it if needed
-            workspace_cmd = f"docker exec {container_id} bash -c 'mkdir -p /workspace && cd /workspace && pwd'"
-            success, output = self.execute_command(workspace_cmd)
-            if not success:
-                return False, f"Failed to setup workspace: {output}", None
-            
-            # Create virtual environment if it doesn't exist
-            venv_cmd = f"docker exec {container_id} bash -c 'cd /workspace && if [ ! -d \"nimaenv\" ]; then python3 -m venv nimaenv; fi'"
-            success, output = self.execute_command(venv_cmd)
-            if not success:
-                print(f"⚠️ Virtual environment warning: {output}")
-            
-            # Install Jupyter in the virtual environment with proper environment setup
-            print("📦 Installing Jupyter and JupyterLab in virtual environment...")
-            install_cmd = f"docker exec {container_id} bash -c 'cd /workspace && source nimaenv/bin/activate && export HOME=/workspace && pip install --user jupyter jupyterlab'"
-            success, output = self.execute_command(install_cmd)
-            if not success:
-                print(f"⚠️ Jupyter installation warning: {output}")
-                # Try alternative installation method
-                install_cmd2 = f"docker exec {container_id} bash -c 'cd /workspace && source nimaenv/bin/activate && export HOME=/workspace && export PIP_CACHE_DIR=/workspace/.pip_cache && mkdir -p $PIP_CACHE_DIR && pip install jupyter jupyterlab'"
-                success, output = self.execute_command(install_cmd2)
-                if not success:
-                    print(f"⚠️ Alternative Jupyter installation also failed: {output}")
-                else:
-                    print(f"✅ Jupyter installed successfully with alternative method")
-            else:
-                print(f"✅ Jupyter installed successfully")
-            
-            # Create Jupyter directories
-            jupyter_dirs_cmd = f"docker exec {container_id} bash -c 'cd /workspace && mkdir -p .jupyter/runtime .jupyter/data .jupyter/config'"
-            success, output = self.execute_command(jupyter_dirs_cmd)
-            if not success:
-                print(f"⚠️ Jupyter directories warning: {output}")
-            
-            # Step 5: Start JupyterLab (authentication disabled - no token needed)
-            print("🌐 Step 5: Starting JupyterLab...")
-            
-            # Find least loaded GPU
-            gpu_cmd = f"docker exec {container_id} bash -c 'nvidia-smi --query-gpu=index,utilization.gpu --format=csv,noheader,nounits | sort -t, -k2 -n | head -1 | cut -d, -f1'"
-            success, gpu_output = self.execute_command(gpu_cmd)
-            if success and gpu_output.strip():
-                gpu_id = gpu_output.strip()
-                print(f"🎮 Using GPU: {gpu_id}")
-            else:
-                gpu_id = "0"  # Default to GPU 0
-                print(f"🎮 Using default GPU: {gpu_id}")
-            
-            # Start JupyterLab in background (authentication disabled - no token needed)
-            print("🌐 Starting JupyterLab in background...")
-            
-            jupyter_bg_cmd = (
-                f"docker exec -d {container_id} sh -lc "
-                f"'cd /workspace && . nimaenv/bin/activate && export HOME=/workspace "
-                f"&& export JUPYTER_RUNTIME_DIR=/workspace/.jupyter/runtime "
-                f"&& export JUPYTER_DATA_DIR=/workspace/.jupyter "
-                f"&& export JUPYTER_CONFIG_DIR=/workspace/.jupyter "
-                f"&& jupyter lab "
-                f"--ServerApp.token='' "
-                f"--ServerApp.password='' "
-                f"--no-browser "
-                f"--ip=0.0.0.0 "
-                f"--port={port} "
-                f"--allow-root'"
+
+            # Stop any running jupyter
+            self.execute_command("pkill -f jupyter || true")
+            time.sleep(1)
+
+            # Ensure container is up
+            self.execute_command(f"/opt/aime-ml-containers/mlc-start {container_name}")
+            time.sleep(2)
+
+            # Get container id
+            ok, container_id = self.execute_command(
+                f"docker ps --filter 'name={container_name}' --format '{{{{.ID}}}}'"
             )
-            
-            success, output = self.execute_command(jupyter_bg_cmd)
-            
-            if not success:
-                return False, f"Failed to start Jupyter in background: {output}", None
-            
-            # Wait a moment for Jupyter to start
-            time.sleep(5)
-            
-            # Check if Jupyter is running by looking for the process
-            check_cmd = f"docker exec {container_id} bash -c 'ps aux | grep jupyter'"
-            success, output = self.execute_command(check_cmd)
-            
-            if success and 'jupyter' in output:
-                print(f"✅ Jupyter started successfully on port {port}")
-                
-                return True, f"Jupyter started on port {port}", None
-            else:
-                return False, f"Jupyter process not found: {output}", None
-            
+            if not ok or not container_id.strip():
+                return False, f"Could not find container ID for {container_name}", None
+            container_id = container_id.strip()
+
+            # pick GPU (best-effort)
+            ok, gpu_output = self.execute_command(
+                f"docker exec {container_id} bash -lc "
+                f"'nvidia-smi --query-gpu=index,utilization.gpu --format=csv,noheader,nounits | "
+                f"sort -t, -k2 -n | head -1 | cut -d, -f1'"
+            )
+            gpu_id = gpu_output.strip() if ok and gpu_output.strip() else "0"
+
+            venv = "nimaenv"
+            # Write a startup script inside container via heredoc to avoid quoting hell
+            start_script = rf"""#!/usr/bin/env bash
+    set -e
+    cd /workspace || (mkdir -p /workspace && cd /workspace)
+
+    # venv
+    [ -d {venv} ] || python3 -m venv {venv}
+    . {venv}/bin/activate
+
+    # env
+    export HOME=/workspace
+    export JUPYTER_RUNTIME_DIR=/workspace/.jupyter/runtime
+    export JUPYTER_DATA_DIR=/workspace/.jupyter
+    export JUPYTER_CONFIG_DIR=/workspace/.jupyter
+    mkdir -p "$JUPYTER_RUNTIME_DIR"
+
+    python -m pip install -U pip
+    python -m pip install jupyterlab ipykernel
+
+    export CUDA_VISIBLE_DEVICES={gpu_id}
+
+    # Start JupyterLab with auth disabled
+    exec jupyter lab \
+    --no-browser \
+    --ip=0.0.0.0 \
+    --port={port} \
+    --ServerApp.token='' \
+    --ServerApp.password='' \
+    --allow-root
+    """
+            # Drop the script and make it executable
+            put_script_cmd = (
+                f"docker exec {container_id} bash -lc "
+                f"\"cat > /workspace/start_jlab.sh << 'EOF'\n{start_script}\nEOF\nchmod +x /workspace/start_jlab.sh\""
+            )
+            ok, out = self.execute_command(put_script_cmd)
+            if not ok:
+                return False, f"Failed to write startup script: {out}", None
+
+            # Try tmux; fall back to background
+            tmux_sess = re.sub(r'[^A-Za-z0-9_.-]', '-', f"jup-{container_name}-{port}")
+            run_tmux_cmd = (
+                f"docker exec {container_id} bash -lc "
+                f"\"if command -v tmux >/dev/null 2>&1; then "
+                f"tmux has-session -t {tmux_sess} 2>/dev/null && tmux kill-session -t {tmux_sess} || true; "
+                f"tmux new-session -d -s {tmux_sess} '/workspace/start_jlab.sh'; "
+                f"echo tmux_ok; "
+                f"else echo tmux_missing; fi\""
+            )
+            ok, out = self.execute_command(run_tmux_cmd)
+            if ok and "tmux_ok" in out:
+                # Confirm it’s up
+                time.sleep(2)
+                return True, f"JupyterLab started on port {port} in tmux session {tmux_sess} (auth disabled)", None
+
+            # Fallback: background process
+            bg_cmd = (
+                f"docker exec -d {container_id} bash -lc "
+                f"\"/workspace/start_jlab.sh > /workspace/jupyter.log 2>&1\""
+            )
+            ok, out = self.execute_command(bg_cmd)
+            if not ok:
+                return False, f"Failed to start JupyterLab: {out}", None
+
+            time.sleep(2)
+            # Quick check
+            ok, ps = self.execute_command(
+                f"docker exec {container_id} bash -lc \"pgrep -fa 'jupyter.*lab' || true\""
+            )
+            if ok and ps.strip():
+                return True, f"JupyterLab started on port {port} (auth disabled)", None
+            return False, f"JupyterLab not found running: {ps}", None
+
         except Exception as e:
-            print(f"❌ Error starting Jupyter: {str(e)}")
-            return False, f"Error starting Jupyter: {str(e)}", None
+            return False, f"Error starting Jupyter: {e}", None
+
     
     def setup_port_forwarding(self, remote_port, local_port):
         """Set up SSH tunnel for port forwarding"""
@@ -303,16 +337,67 @@ class GPUServerManager:
     
     def cleanup(self):
         """Clean up SSH connection and tunnel"""
+        print(f"🧹 Cleaning up SSH tunnel and connection...")
+        
+        # Clean up SSH tunnel process
         if self.ssh_tunnel_process:
             try:
+                print(f"🛑 Terminating SSH tunnel process...")
                 self.ssh_tunnel_process.terminate()
                 self.ssh_tunnel_process.wait(timeout=5)
+                print(f"✅ SSH tunnel process terminated")
             except:
+                print(f"⚠️ Force killing SSH tunnel process...")
                 self.ssh_tunnel_process.kill()
         
+        # Clean up SSH client
         if self.ssh_client:
-            self.ssh_client.close()
+            try:
+                print(f"🔌 Closing SSH connection...")
+                self.ssh_client.close()
+                print(f"✅ SSH connection closed")
+            except Exception as e:
+                print(f"⚠️ Error closing SSH connection: {e}")
+        
+        # Clean up any remaining SSH processes on local ports
+        if self.local_port:
+            try:
+                print(f"🧹 Cleaning up local port {self.local_port}...")
+                cleanup_cmd = f"lsof -ti:{self.local_port} | xargs kill -9 2>/dev/null || true"
+                subprocess.run(cleanup_cmd, shell=True, capture_output=True)
+                print(f"✅ Local port {self.local_port} cleaned up")
+            except Exception as e:
+                print(f"⚠️ Error cleaning up local port {self.local_port}: {e}")
     
+    def stop_jupyter(self, container_name, port):
+        """Stop JupyterLab session using tmux"""
+        try:
+            print(f"🛑 Stopping JupyterLab in container: {container_name}")
+            
+            # Get container ID
+            container_id_cmd = f"docker ps --filter 'name={container_name}' --format '{{{{.ID}}}}'"
+            success, container_id = self.execute_command(container_id_cmd)
+            if not success or not container_id.strip():
+                return False, f"Could not find container ID for {container_name}"
+            
+            container_id = container_id.strip()
+            tmux_session = f"jup-{container_name}-{port}"
+            
+            # Kill tmux session
+            stop_cmd = f"docker exec {container_id} bash -c 'tmux has-session -t {tmux_session} 2>/dev/null && tmux kill-session -t {tmux_session} && echo \"Session killed\" || echo \"Session not found\"'"
+            success, output = self.execute_command(stop_cmd)
+            
+            if success and "Session killed" in output:
+                print(f"✅ JupyterLab session stopped: {tmux_session}")
+                return True, f"JupyterLab session stopped: {tmux_session}"
+            else:
+                print(f"⚠️ Session not found or already stopped: {tmux_session}")
+                return True, f"JupyterLab session already stopped: {tmux_session}"
+                
+        except Exception as e:
+            print(f"❌ Error stopping Jupyter: {str(e)}")
+            return False, f"Error stopping Jupyter: {str(e)}"
+
     def get_jupyter_token(self, container_name):
         """Get JupyterLab status (authentication disabled - no token needed)"""
         try:
@@ -328,8 +413,21 @@ class GPUServerManager:
             container_id = container_id.strip()
             print(f"🔍 DEBUG: Found container ID: {container_id}")
             
-            # Check if JupyterLab is running
-            print(f"🔍 DEBUG: Checking JupyterLab status...")
+            # Check if JupyterLab is running via tmux sessions
+            print(f"🔍 DEBUG: Checking JupyterLab tmux sessions...")
+            
+            # Look for tmux sessions for this container
+            tmux_check_cmd = f"docker exec {container_id} bash -c 'tmux list-sessions 2>/dev/null | grep jup-{container_name}'"
+            success, tmux_output = self.execute_command(tmux_check_cmd)
+            print(f"🔍 DEBUG: Tmux sessions check - Success: {success}")
+            print(f"🔍 DEBUG: Tmux sessions output: {repr(tmux_output)}")
+            
+            if success and tmux_output.strip():
+                print(f"✅ DEBUG: JupyterLab tmux session found (authentication disabled)")
+                return True, f"JupyterLab running in tmux session: {tmux_output.strip()} (authentication disabled)", None
+            
+            # Fallback: Check if JupyterLab is running via process
+            print(f"🔍 DEBUG: Checking JupyterLab process...")
             simple_cmd = f"docker exec {container_id} jupyter lab list"
             success, simple_output = self.execute_command(simple_cmd)
             print(f"🔍 DEBUG: JupyterLab status - Success: {success}")
@@ -901,6 +999,110 @@ def gpu_info():
         return jsonify({'success': True, 'gpu_info': output})
     else:
         return jsonify({'success': False, 'message': output})
+
+@app.route('/cleanup-ports', methods=['POST'])
+def cleanup_ports():
+    """Clean up only ports and SSH tunnels, keep sessions active"""
+    try:
+        print(f"🧹 Manual port cleanup requested...")
+        
+        # Get session ID from request
+        data = request.get_json() or {}
+        session_id = data.get('session_id')
+        
+        if session_id and session_id in active_sessions:
+            # Clean up only the SSH tunnel for this session, keep the session
+            session = active_sessions[session_id]
+            manager = session['manager']
+            
+            # Clean up only the tunnel, not the entire session
+            if manager.local_port:
+                try:
+                    print(f"🧹 Cleaning up local port {manager.local_port}...")
+                    cleanup_cmd = f"lsof -ti:{manager.local_port} | xargs kill -9 2>/dev/null || true"
+                    subprocess.run(cleanup_cmd, shell=True, capture_output=True)
+                    print(f"✅ Local port {manager.local_port} cleaned up")
+                    
+                    # Reset the local port
+                    manager.local_port = None
+                    manager.ssh_tunnel_process = None
+                    
+                except Exception as e:
+                    print(f"⚠️ Error cleaning up local port {manager.local_port}: {e}")
+        
+        # Also run global port cleanup for any orphaned processes
+        cleanup_all_ports()
+        
+        return jsonify({
+            'success': True, 
+            'message': 'Ports and SSH tunnels cleaned up successfully (sessions preserved)'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False, 
+            'message': f'Error during cleanup: {str(e)}'
+        })
+
+@app.route('/check-ports')
+def check_ports():
+    """Check which ports are currently in use"""
+    try:
+        port_range = LOCAL_PORT_RANGE
+        used_ports = []
+        
+        for port in port_range:
+            check_cmd = f"lsof -i:{port} 2>/dev/null"
+            result = subprocess.run(check_cmd, shell=True, capture_output=True, text=True)
+            if result.returncode == 0 and result.stdout.strip():
+                used_ports.append({
+                    'port': port,
+                    'processes': result.stdout.strip()
+                })
+        
+        return jsonify({
+            'success': True,
+            'used_ports': used_ports,
+            'total_checked': len(port_range)
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'Error checking ports: {str(e)}'
+        })
+
+@app.route('/full-cleanup', methods=['POST'])
+def full_cleanup():
+    """Clean up everything - ports, tunnels, and sessions"""
+    try:
+        print(f"🧹 Full cleanup requested...")
+        
+        # Clean up all active sessions
+        for session_id, session in list(active_sessions.items()):
+            try:
+                manager = session['manager']
+                manager.cleanup()
+                print(f"✅ Cleaned up session {session_id}")
+            except Exception as e:
+                print(f"⚠️ Error cleaning up session {session_id}: {e}")
+        
+        # Clear all sessions
+        active_sessions.clear()
+        
+        # Run global port cleanup
+        cleanup_all_ports()
+        
+        return jsonify({
+            'success': True, 
+            'message': 'Full cleanup completed - all sessions and ports cleared'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False, 
+            'message': f'Error during full cleanup: {str(e)}'
+        })
 
 if __name__ == '__main__':
     # Clean up any expired sessions on startup

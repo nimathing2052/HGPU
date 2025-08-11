@@ -456,8 +456,26 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>📦 Container Management</h1>
-            <p>Manage your GPU containers and launch Jupyter sessions</p>
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <h1>📦 Container Management</h1>
+                    <p>Manage your GPU containers and launch Jupyter sessions</p>
+                </div>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <div id="session-info" style="background: rgba(255,255,255,0.2); padding: 10px; border-radius: 8px; font-size: 0.9em;">
+                        <strong>Session ID:</strong> <span id="session-id-display">Loading...</span>
+                    </div>
+                    <button onclick="cleanupAllPorts()" class="btn btn-warning" style="font-size: 0.9em; padding: 8px 16px;">
+                        🧹 Cleanup Ports
+                    </button>
+                    <button onclick="fullCleanup()" class="btn btn-danger" style="font-size: 0.9em; padding: 8px 16px;">
+                        🗑️ Full Cleanup
+                    </button>
+                    <button onclick="logout()" class="btn btn-secondary" style="font-size: 0.9em; padding: 8px 16px;">
+                        🚪 Logout
+                    </button>
+                </div>
+            </div>
         </div>
 
         <div class="content">
@@ -516,6 +534,136 @@
         };
 
         let currentSessionId = null;
+
+        // Session management functions
+        function showSessionInfo() {
+            const sessionIdDisplay = document.getElementById('session-id-display');
+            if (currentSessionId) {
+                sessionIdDisplay.textContent = currentSessionId.substring(0, 8) + '...';
+                sessionIdDisplay.title = currentSessionId;
+            } else {
+                sessionIdDisplay.textContent = 'No Session';
+            }
+        }
+
+        async function cleanupAllPorts() {
+            if (!confirm('Are you sure you want to cleanup ports and SSH tunnels? This will keep your session active.')) {
+                return;
+            }
+            
+            try {
+                showAlert('🧹 Cleaning up ports and SSH tunnels...', 'info');
+                
+                const response = await fetch('/cleanup-ports', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        session_id: currentSessionId
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showAlert('✅ Ports and SSH tunnels cleaned up successfully! (Session preserved)', 'success');
+                    // Don't clear session - keep containers visible
+                    loadContainers(); // Refresh container list
+                } else {
+                    showAlert('❌ Error during cleanup: ' + result.message, 'error');
+                }
+            } catch (error) {
+                showAlert('❌ Error during cleanup: ' + error.message, 'error');
+            }
+        }
+
+        async function fullCleanup() {
+            if (!confirm('Are you sure you want to perform full cleanup? This will close all sessions and clear everything.')) {
+                return;
+            }
+            
+            try {
+                showAlert('🗑️ Performing full cleanup...', 'info');
+                
+                const response = await fetch('/full-cleanup', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showAlert('✅ Full cleanup completed! All sessions and ports cleared.', 'success');
+                    currentSessionId = null;
+                    showSessionInfo();
+                    loadContainers(); // Refresh container list
+                } else {
+                    showAlert('❌ Error during full cleanup: ' + result.message, 'error');
+                }
+            } catch (error) {
+                showAlert('❌ Error during full cleanup: ' + error.message, 'error');
+            }
+        }
+
+        async function logout() {
+            if (!confirm('Are you sure you want to logout? This will close all active sessions.')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch('/logout', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        session_id: currentSessionId
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showAlert('✅ Logged out successfully!', 'success');
+                    // Clear session and redirect
+                    localStorage.removeItem('session_id');
+                    currentSessionId = null;
+                    setTimeout(() => {
+                        window.location.href = '/';
+                    }, 1500);
+                } else {
+                    showAlert('❌ Error during logout: ' + result.message, 'error');
+                }
+            } catch (error) {
+                showAlert('❌ Error during logout: ' + error.message, 'error');
+            }
+        }
+
+        async function checkPorts() {
+            try {
+                const response = await fetch('/check-ports');
+                const result = await response.json();
+                
+                if (result.success) {
+                    if (result.used_ports.length > 0) {
+                        let message = `Found ${result.used_ports.length} used ports:\n`;
+                        result.used_ports.forEach(port => {
+                            message += `Port ${port.port}: ${port.processes}\n`;
+                        });
+                        alert(message);
+                    } else {
+                        alert('No ports are currently in use.');
+                    }
+                } else {
+                    alert('Error checking ports: ' + result.message);
+                }
+            } catch (error) {
+                alert('Error checking ports: ' + error.message);
+            }
+        }
 
         // Populate version dropdown based on framework selection
         document.getElementById('framework').addEventListener('change', function() {
@@ -791,6 +939,9 @@
             // Get session ID from URL parameters or localStorage
             const urlParams = new URLSearchParams(window.location.search);
             currentSessionId = urlParams.get('session_id') || localStorage.getItem('session_id');
+            
+            // Show session info
+            showSessionInfo();
             
             if (currentSessionId) {
                 loadContainers();
