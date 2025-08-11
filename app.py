@@ -112,6 +112,15 @@ def health_check():
         'session_count': session_manager.get_session_count()
     })
 
+@app.route('/api/status')
+def api_status():
+    """Simple API status endpoint for health checks"""
+    return jsonify({
+        'status': 'ok',
+        'message': 'Hertie GPU Server Automation App is running',
+        'timestamp': datetime.now().isoformat()
+    })
+
 @app.route('/authenticate', methods=['POST'])
 def authenticate():
     """Handle initial authentication and get container list"""

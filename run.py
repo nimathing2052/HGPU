@@ -107,10 +107,12 @@ def main():
         port = int(os.getenv('PORT', 2344))
         
         print(f"📡 Server will be available at: http://localhost:{port}")
+        print(f"🌍 Environment: {os.getenv('FLASK_ENV', 'development')}")
+        print(f"🔧 Debug mode: {os.getenv('FLASK_DEBUG', 'False')}")
         print("🛑 Press Ctrl+C to stop the server\n")
         
         # Run the Flask app
-        app.run(debug=False, host='0.0.0.0', port=port)
+        app.run(debug=False, host='0.0.0.0', port=port, threaded=True)
         
     except KeyboardInterrupt:
         print("\n👋 Server stopped by user")
