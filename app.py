@@ -72,11 +72,19 @@ signal.signal(signal.SIGTERM, signal_handler)
 # Register cleanup function to run on exit
 atexit.register(lambda: cleanup_all_ports(LOCAL_PORT_RANGE))
 
-
-
-
-
-
+def strip_ansi_codes(text):
+    """
+    Remove ANSI escape sequences from text.
+    
+    Args:
+        text (str): Text containing ANSI escape sequences
+        
+    Returns:
+        str: Clean text without ANSI codes
+    """
+    # ANSI escape sequence pattern
+    ansi_pattern = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
+    return ansi_pattern.sub('', text)
 
 @app.route('/')
 def index():
@@ -660,7 +668,9 @@ def handle_start_shell(data):
                     while True:
                         if channel.recv_ready():
                             data = channel.recv(1024).decode('utf-8', errors='ignore')
-                            socketio.emit('shell_output', {'data': data}, room=socket_id)
+                            # Strip ANSI color codes from the output
+                            clean_data = strip_ansi_codes(data)
+                            socketio.emit('shell_output', {'data': clean_data}, room=socket_id)
                         time.sleep(0.1)
                 except Exception as e:
                     print(f"❌ Shell read error: {e}")
