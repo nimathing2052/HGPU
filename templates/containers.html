@@ -371,8 +371,10 @@
             border-radius: 10px;
             width: 90%;
             max-width: 800px;
+            min-height: 400px;
             max-height: 90vh;
             box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+            transition: height 0.3s ease;
         }
 
         .modal-header {
@@ -404,7 +406,7 @@
 
         .modal-body {
             padding: 20px;
-            max-height: 600px;
+            max-height: 70vh;
             overflow-y: auto;
         }
 
@@ -461,19 +463,18 @@
                     <h1>📦 Container Management</h1>
                     <p>Manage your GPU containers and launch VS Code sessions</p>
                 </div>
-                <div style="display: flex; gap: 10px; align-items: center;">
-                    <div id="session-info" style="background: rgba(255,255,255,0.2); padding: 10px; border-radius: 8px; font-size: 0.9em;">
+                <div style="display: flex; flex-direction: column; gap: 10px; align-items: flex-end;">
+                    <div id="session-info" style="background: rgba(255,255,255,0.2); padding: 10px; border-radius: 8px; font-size: 0.9em; margin-bottom: 5px;">
                         <strong>Session ID:</strong> <span id="session-id-display">Loading...</span>
                     </div>
-                    <button onclick="cleanupAllPorts()" class="btn btn-warning" style="font-size: 0.9em; padding: 8px 16px;">
-                        🧹 Cleanup Ports
-                    </button>
-                    <button onclick="fullCleanup()" class="btn btn-danger" style="font-size: 0.9em; padding: 8px 16px;">
-                        🗑️ Full Cleanup
-                    </button>
-                    <button onclick="logout()" class="btn btn-secondary" style="font-size: 0.9em; padding: 8px 16px;">
-                        🚪 Logout
-                    </button>
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <button onclick="cleanupAllPorts()" class="btn btn-warning" style="font-size: 0.9em; padding: 8px 16px;">
+                            🧹 Cleanup Ports
+                        </button>
+                        <button onclick="logout()" class="btn btn-secondary" style="font-size: 0.9em; padding: 8px 16px;">
+                            🚪 Logout
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -578,35 +579,7 @@
             }
         }
 
-        async function fullCleanup() {
-            if (!confirm('Are you sure you want to perform full cleanup? This will close all sessions and clear everything.')) {
-                return;
-            }
-            
-            try {
-                showAlert('🗑️ Performing full cleanup...', 'info');
-                
-                const response = await fetch('/full-cleanup', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    }
-                });
-                
-                const result = await response.json();
-                
-                if (result.success) {
-                    showAlert('✅ Full cleanup completed! All sessions and ports cleared.', 'success');
-                    currentSessionId = null;
-                    showSessionInfo();
-                    loadContainers(); // Refresh container list
-                } else {
-                    showAlert('❌ Error during full cleanup: ' + result.message, 'error');
-                }
-            } catch (error) {
-                showAlert('❌ Error during full cleanup: ' + error.message, 'error');
-            }
-        }
+
 
         async function logout() {
             if (!confirm('Are you sure you want to logout? This will close all active sessions.')) {
@@ -688,6 +661,23 @@
             const formData = new FormData(this);
             formData.append('session_id', currentSessionId);
             
+            // Show loading state
+            const submitButton = this.querySelector('button[type="submit"]');
+            const originalText = submitButton.textContent;
+            submitButton.textContent = '⏳ Creating...';
+            submitButton.disabled = true;
+            submitButton.style.background = '#ffc107';
+            
+            // Show loading animation in containers area
+            const containersContainer = document.getElementById('containers-container');
+            const originalContent = containersContainer.innerHTML;
+            containersContainer.innerHTML = `
+                <div class="loading" style="display: block;">
+                    <div class="spinner"></div>
+                    <p>Creating container...</p>
+                </div>
+            `;
+            
             try {
                 const response = await fetch('/create-container', {
                     method: 'POST',
@@ -702,9 +692,18 @@
                     this.reset();
                 } else {
                     showAlert(result.message, 'error');
+                    // Restore original content on error
+                    containersContainer.innerHTML = originalContent;
                 }
             } catch (error) {
                 showAlert('Error creating container: ' + error.message, 'error');
+                // Restore original content on error
+                containersContainer.innerHTML = originalContent;
+            } finally {
+                // Restore button state
+                submitButton.textContent = originalText;
+                submitButton.disabled = false;
+                submitButton.style.background = '';
             }
         });
 
@@ -787,17 +786,20 @@
             setTimeout(() => addProgressStep('🔍 Finding container ID...', 'pending'), 3600);
             setTimeout(() => updateProgressStep('🔍 Finding container ID...', 'completed'), 4500);
             
-            setTimeout(() => addProgressStep('📁 Setting up workspace and environment...', 'pending'), 4600);
-            setTimeout(() => updateProgressStep('📁 Setting up workspace and environment...', 'completed'), 6000);
+            setTimeout(() => addProgressStep('🎯 Selecting optimal GPU based on availability...', 'pending'), 4600);
+            setTimeout(() => updateProgressStep('🎯 Selecting optimal GPU based on availability...', 'completed'), 6000);
             
-            setTimeout(() => addProgressStep('🌐 Starting Jupyter with authentication disabled...', 'pending'), 6100);
-            setTimeout(() => updateProgressStep('🌐 Starting Jupyter with authentication disabled...', 'completed'), 8000);
+            setTimeout(() => addProgressStep('📁 Setting up workspace and environment...', 'pending'), 6100);
+            setTimeout(() => updateProgressStep('📁 Setting up workspace and environment...', 'completed'), 8000);
             
-            setTimeout(() => addProgressStep('🔗 Setting up port forwarding...', 'pending'), 8100);
-            setTimeout(() => updateProgressStep('🔗 Setting up port forwarding...', 'completed'), 10000);
+            setTimeout(() => addProgressStep('🌐 Starting Jupyter with authentication disabled...', 'pending'), 8100);
+            setTimeout(() => updateProgressStep('🌐 Starting Jupyter with authentication disabled...', 'completed'), 10000);
             
-            setTimeout(() => addProgressStep('✅ Finalizing Jupyter setup...', 'pending'), 10100);
-            setTimeout(() => updateProgressStep('✅ Finalizing Jupyter setup...', 'completed'), 12000);
+            setTimeout(() => addProgressStep('🔗 Setting up port forwarding...', 'pending'), 10100);
+            setTimeout(() => updateProgressStep('🔗 Setting up port forwarding...', 'completed'), 12000);
+            
+            setTimeout(() => addProgressStep('✅ Finalizing Jupyter setup...', 'pending'), 12100);
+            setTimeout(() => updateProgressStep('✅ Finalizing Jupyter setup...', 'completed'), 14000);
             
             try {
                 const response = await fetch('/launch-jupyter', {
@@ -818,6 +820,10 @@
                 
                 if (result.success) {
                     const jupyterUrl = result.jupyter_url;
+                    const selectedGpu = result.selected_gpu || 0;
+                    
+                    // Update the GPU selection step with the actual GPU number
+                    updateProgressStep(`🎯 Selected GPU ${selectedGpu} based on lowest utilization`, 'completed');
                     
                     let alertMessage = `Jupyter Notebook launched successfully! <a href="${jupyterUrl}" target="_blank" class="btn btn-success" style="margin-left: 10px;">🌐 Open Jupyter</a>`;
                     
@@ -826,6 +832,7 @@
                         <strong>✅ No Authentication Required:</strong> 
                         <br><small style="color: #155724;">Jupyter is running without authentication. You can access it directly!</small>
                         <br><small style="color: #155724;">💡 Tip: Create new notebooks or upload existing ones.</small>
+                        <br><small style="color: #155724;">🎯 Using GPU ${selectedGpu} (selected based on lowest utilization)</small>
                     </div>`;
                     
                     showAlert(alertMessage, 'success');
@@ -838,7 +845,7 @@
             } catch (error) {
                 hideProgressModal();
                 updateProgressStep(`❌ Network Error: ${error.message}`, 'error');
-                showAlert('Error launching VS Code: ' + error.message, 'error');
+                showAlert('Error launching Jupyter: ' + error.message, 'error');
             }
         }
 
@@ -971,7 +978,7 @@
             progressSteps.innerHTML = '';
             
             // Add initial step
-            addProgressStep('🚀 Starting VS Code (code-server) launch process...', 'pending');
+            addProgressStep('🚀 Starting Jupyter launch process...', 'pending');
             
             modal.style.display = 'block';
         }
@@ -992,7 +999,22 @@
                 <div class="step-message">${message}</div>
             `;
             progressSteps.appendChild(stepDiv);
+            
+            // Auto-scroll to the bottom and ensure the modal expands
             progressSteps.scrollTop = progressSteps.scrollHeight;
+            
+            // Expand modal height if needed
+            const modal = document.getElementById('progressModal');
+            const modalContent = modal.querySelector('.modal-content');
+            const currentHeight = modalContent.style.height || 'auto';
+            
+            // Calculate new height based on content
+            const stepsHeight = progressSteps.scrollHeight;
+            const minHeight = 400; // Minimum height
+            const newHeight = Math.max(minHeight, stepsHeight + 150); // Add padding
+            
+            modalContent.style.height = newHeight + 'px';
+            modalContent.style.maxHeight = '90vh'; // Ensure it doesn't exceed viewport
         }
         
         function updateProgressStep(message, status) {
@@ -1013,7 +1035,7 @@
     <div id="progressModal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
-                <h3>🚀 Launching VS Code (code-server)</h3>
+                <h3>🚀 Launching Jupyter</h3>
                 <span class="close" onclick="hideProgressModal()">&times;</span>
             </div>
             <div class="modal-body">

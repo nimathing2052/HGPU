@@ -817,6 +817,11 @@ def launch_jupyter():
     
     print(f"✅ Found available local port: {local_port}")
     
+    # Find optimal GPU based on availability
+    print(f"🎯 Selecting optimal GPU based on availability...")
+    optimal_gpu = manager.find_least_loaded_gpu()
+    print(f"✅ Selected GPU {optimal_gpu} based on lowest utilization")
+    
     # Start Jupyter in container with proper workflow
     print(f"🚀 Launching Jupyter for container: {container_name}")
     success, message, token, meta = manager.start_jupyter(container_name, 0)
@@ -843,7 +848,8 @@ def launch_jupyter():
         'jupyter_url': jupyter_url,
         'local_port': local_port,
         'container_name': container_name,
-        'token': token  # Will be None if auth disabled
+        'token': token,  # Will be None if auth disabled
+        'selected_gpu': optimal_gpu  # Add the selected GPU information
     })
 
 def parse_container_list(mlc_output):
@@ -1154,37 +1160,7 @@ def check_ports():
             'message': f'Error checking ports: {str(e)}'
         })
 
-@app.route('/full-cleanup', methods=['POST'])
-def full_cleanup():
-    """Clean up everything - ports, tunnels, and sessions"""
-    try:
-        print(f"🧹 Full cleanup requested...")
-        
-        # Clean up all active sessions
-        for session_id, session in list(active_sessions.items()):
-            try:
-                manager = session['manager']
-                manager.cleanup()
-                print(f"✅ Cleaned up session {session_id}")
-            except Exception as e:
-                print(f"⚠️ Error cleaning up session {session_id}: {e}")
-        
-        # Clear all sessions
-        active_sessions.clear()
-        
-        # Run global port cleanup
-        cleanup_all_ports()
-        
-        return jsonify({
-            'success': True, 
-            'message': 'Full cleanup completed - all sessions and ports cleared'
-        })
-        
-    except Exception as e:
-        return jsonify({
-            'success': False, 
-            'message': f'Error during full cleanup: {str(e)}'
-        })
+
 
 if __name__ == '__main__':
     # Clean up any expired sessions on startup
