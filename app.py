@@ -14,6 +14,7 @@ import signal
 import atexit
 import json
 from flask import Flask, render_template, request, jsonify, redirect, url_for
+from flask_socketio import SocketIO, emit, disconnect
 import re
 
 # Import the modular GPU Server Manager
@@ -24,6 +25,7 @@ from port_utils import find_available_local_port, find_available_flask_port, cle
 from session_manager import session_manager
 
 app = Flask(__name__)
+socketio = SocketIO(app, cors_allowed_origins="*")
 
 # Import configuration
 try:
@@ -45,10 +47,21 @@ except ImportError:
 def signal_handler(signum, frame):
     """Handle shutdown signals"""
     print(f"\n🛑 Received signal {signum}, cleaning up...")
-    cleanup_all_ports(LOCAL_PORT_RANGE)
     
-    # Clean up all active sessions
+    # Run port cleanup in parallel with session cleanup
+    port_cleanup_thread = threading.Thread(
+        target=cleanup_all_ports,
+        args=(LOCAL_PORT_RANGE,),
+        daemon=True
+    )
+    port_cleanup_thread.start()
+    
+    # Clean up all active sessions (now optimized with parallel processing)
     session_manager.shutdown()
+    
+    # Wait for port cleanup to complete (with timeout)
+    port_cleanup_thread.join(timeout=10)
+    
     print(f"✅ Cleanup completed, exiting...")
     sys.exit(0)
 
@@ -74,6 +87,11 @@ def index():
 def containers():
     """Container management page"""
     return render_template('containers.html')
+
+@app.route('/shell')
+def shell():
+    """Interactive shell page"""
+    return render_template('shell.html')
 
 @app.route('/authenticate', methods=['POST'])
 def authenticate():
@@ -592,7 +610,124 @@ def check_ports():
             'message': f'Error checking ports: {str(e)}'
         })
 
+# WebSocket event handlers for interactive shell
+@socketio.on('connect')
+def handle_connect():
+    """Handle WebSocket connection"""
+    print(f"🔌 WebSocket client connected: {request.sid}")
+    emit('connected', {'status': 'connected'})
 
+@socketio.on('disconnect')
+def handle_disconnect():
+    """Handle WebSocket disconnection"""
+    print(f"🔌 WebSocket client disconnected: {request.sid}")
+
+@socketio.on('start_shell')
+def handle_start_shell(data):
+    """Start an interactive shell session"""
+    try:
+        session_id = data.get('session_id')
+        container_name = data.get('container_name')  # Optional
+        
+        if not session_id:
+            emit('shell_error', {'message': 'Session ID is required'})
+            return
+        
+        session = session_manager.get_session(session_id)
+        if not session:
+            emit('shell_error', {'message': 'Invalid session'})
+            return
+        
+        manager = session['manager']
+        
+        # Create interactive shell
+        try:
+            channel = manager.create_interactive_shell(container_name)
+            
+            # Store the channel in the session for later use
+            session['shell_channel'] = channel
+            session['shell_sid'] = request.sid
+            
+            print(f"🐚 Interactive shell started for session {session_id}")
+            emit('shell_started', {'message': 'Interactive shell started'})
+            
+            # Store the socket ID for the background thread
+            socket_id = request.sid
+            
+            # Start a thread to read from the channel and send to client
+            def read_channel():
+                try:
+                    while True:
+                        if channel.recv_ready():
+                            data = channel.recv(1024).decode('utf-8', errors='ignore')
+                            socketio.emit('shell_output', {'data': data}, room=socket_id)
+                        time.sleep(0.1)
+                except Exception as e:
+                    print(f"❌ Shell read error: {e}")
+                    socketio.emit('shell_error', {'message': f'Shell read error: {e}'}, room=socket_id)
+            
+            thread = threading.Thread(target=read_channel, daemon=True)
+            thread.start()
+            
+        except Exception as e:
+            emit('shell_error', {'message': f'Failed to start shell: {e}'})
+            
+    except Exception as e:
+        emit('shell_error', {'message': f'Shell error: {e}'})
+
+@socketio.on('shell_input')
+def handle_shell_input(data):
+    """Handle shell input from client"""
+    try:
+        session_id = data.get('session_id')
+        command = data.get('command', '')
+        
+        if not session_id:
+            emit('shell_error', {'message': 'Session ID is required'})
+            return
+        
+        session = session_manager.get_session(session_id)
+        if not session or 'shell_channel' not in session:
+            emit('shell_error', {'message': 'No active shell session'})
+            return
+        
+        channel = session['shell_channel']
+        
+        # Send command to shell
+        channel.send(command)
+        print(f"📤 Sent command to shell: {repr(command)}")
+        
+    except Exception as e:
+        emit('shell_error', {'message': f'Shell input error: {e}'})
+
+@socketio.on('stop_shell')
+def handle_stop_shell(data):
+    """Stop the interactive shell session"""
+    try:
+        session_id = data.get('session_id')
+        
+        if not session_id:
+            emit('shell_error', {'message': 'Session ID is required'})
+            return
+        
+        session = session_manager.get_session(session_id)
+        if not session:
+            emit('shell_error', {'message': 'Invalid session'})
+            return
+        
+        # Close the shell channel
+        if 'shell_channel' in session:
+            try:
+                session['shell_channel'].close()
+                del session['shell_channel']
+                del session['shell_sid']
+                print(f"🐚 Shell session closed for {session_id}")
+                emit('shell_stopped', {'message': 'Shell session closed'})
+            except Exception as e:
+                emit('shell_error', {'message': f'Error closing shell: {e}'})
+        
+    except Exception as e:
+        emit('shell_error', {'message': f'Shell stop error: {e}'})
 
 if __name__ == '__main__':
     # Clean up any expired sessions on startup
@@ -614,7 +749,7 @@ if __name__ == '__main__':
     except:
         pass
     
-    print(f"🚀 Starting Flask app on port {port}")
+    print(f"🚀 Starting Flask app with WebSocket support on port {port}")
     print(f"🔧 Session timeout: 1 hour")
     print(f"🧹 Auto-cleanup: Enabled")
-    app.run(debug=FLASK_DEBUG, host=FLASK_HOST, port=port)
+    socketio.run(app, debug=FLASK_DEBUG, host=FLASK_HOST, port=port)

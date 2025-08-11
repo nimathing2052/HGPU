@@ -72,18 +72,27 @@ def cleanup_all_ports(port_range):
     print(f"🧹 Global port cleanup initiated...")
     
     try:
-        # Kill all SSH processes that might be using our port range
-        for port in port_range:
-            cleanup_cmd = f"lsof -ti:{port} | xargs kill -9 2>/dev/null || true"
-            result = subprocess.run(cleanup_cmd, shell=True, capture_output=True, text=True)
-            if result.returncode == 0 and result.stdout.strip():
-                print(f"✅ Cleaned up port {port}")
+        # More efficient bulk cleanup approach
+        port_list = list(port_range)
+        if not port_list:
+            return
         
-        # Also kill any ssh processes that might be hanging
-        ssh_cleanup = "pkill -f 'ssh.*-L.*localhost' 2>/dev/null || true"
-        subprocess.run(ssh_cleanup, shell=True, capture_output=True)
+        # Create a single command to check all ports at once
+        ports_str = ','.join(map(str, port_list))
+        bulk_cleanup_cmd = f"lsof -ti:{ports_str} | xargs kill -9 2>/dev/null || true"
+        
+        # Run bulk cleanup with timeout
+        result = subprocess.run(bulk_cleanup_cmd, shell=True, capture_output=True, text=True, timeout=5)
+        if result.returncode == 0 and result.stdout.strip():
+            print(f"✅ Bulk cleaned up ports in range")
+        
+        # Also kill any ssh processes that might be hanging (with timeout)
+        ssh_cleanup = "timeout 3 pkill -f 'ssh.*-L.*localhost' 2>/dev/null || true"
+        subprocess.run(ssh_cleanup, shell=True, capture_output=True, timeout=3)
         print(f"✅ Cleaned up SSH tunnel processes")
         
+    except subprocess.TimeoutExpired:
+        print(f"⚠️ Port cleanup timeout - continuing...")
     except Exception as e:
         print(f"⚠️ Error during global port cleanup: {e}")
 

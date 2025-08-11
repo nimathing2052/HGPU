@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Container Management - Hertie GPU Server</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
     <style>
         * {
             margin: 0;
@@ -453,6 +454,111 @@
             font-size: 0.95em;
             line-height: 1.4;
         }
+
+        /* Shell Section Styles */
+        .shell-section {
+            background: #1e1e1e;
+            border-radius: 10px;
+            margin-top: 20px;
+            overflow: hidden;
+            border: 2px solid #333;
+        }
+
+        .shell-header {
+            background: #2d2d2d;
+            padding: 15px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #444;
+        }
+
+        .shell-header h3 {
+            color: #00ff00;
+            margin: 0;
+            font-family: 'Courier New', monospace;
+        }
+
+        .shell-controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .shell-controls select {
+            padding: 8px 12px;
+            border-radius: 4px;
+            border: 1px solid #555;
+            background: #333;
+            color: white;
+            font-family: inherit;
+        }
+
+        .shell-status {
+            padding: 10px 20px;
+            background: #333;
+            border-bottom: 1px solid #444;
+        }
+
+        .shell-status .status-text {
+            color: #ff6b6b;
+            font-weight: bold;
+            font-family: 'Courier New', monospace;
+        }
+
+        .shell-status.connected .status-text {
+            color: #00ff00;
+        }
+
+        .shell-status.connecting .status-text {
+            color: #ffd93d;
+        }
+
+        .shell-terminal {
+            height: 400px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .shell-output {
+            flex: 1;
+            background: #000000;
+            color: #00ff00;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.4;
+            padding: 15px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .shell-input-container {
+            padding: 15px;
+            background: #1a1a1a;
+            border-top: 1px solid #444;
+        }
+
+        .shell-input-container input {
+            width: 100%;
+            background: #000000;
+            color: #00ff00;
+            border: 1px solid #555;
+            padding: 10px 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            outline: none;
+            border-radius: 4px;
+        }
+
+        .shell-input-container input:focus {
+            border-color: #007acc;
+        }
+
+        .shell-input-container input:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
     </style>
 </head>
 <body>
@@ -731,8 +837,11 @@
                 });
         }
 
-        function displayContainers(containers) {
+        function displayContainers(containersData) {
             const containersGrid = document.getElementById('containers-grid');
+            
+            // Store containers globally for shell functionality
+            containers = containersData;
             
             if (containers.length === 0) {
                 containersGrid.innerHTML = '<p style="grid-column: 1/-1; text-align: center; color: #6c757d;">No containers found. Create your first container above!</p>';
@@ -765,7 +874,7 @@
                             `<button class="btn btn-success" onclick="launchJupyter('${container.name}')">🌐 Launch Jupyter</button>` :
                             `<button class="btn" onclick="startContainer('${container.name}')">▶️ Start</button>`
                         }
-                        <button class="btn btn-secondary" onclick="openContainer('${container.name}')">🔧 Open Shell</button>
+                        <button class="btn btn-secondary" onclick="openShell('${container.name}')">🔧 Open Shell</button>
                                                     <button class="btn btn-danger" onclick="removeContainer('${container.name}')">🗑️ Remove</button>
                     </div>
                 </div>
@@ -917,8 +1026,33 @@
             }
         }
 
-        function openContainer(containerName) {
-            showAlert('Shell access feature coming soon!', 'info');
+        function openShell(containerName) {
+            if (!currentSessionId) {
+                showAlert('No active session found. Please authenticate first.', 'error');
+                return;
+            }
+            
+            // Show the shell section
+            const shellSection = document.getElementById('shellSection');
+            const shellContainerSelect = document.getElementById('shellContainerSelect');
+            
+            // Update container options
+            shellContainerSelect.innerHTML = '<option value="">Host Shell</option>';
+            containers.forEach(container => {
+                const option = document.createElement('option');
+                option.value = container.name;
+                option.textContent = container.name;
+                if (container.name === containerName) {
+                    option.selected = true;
+                }
+                shellContainerSelect.appendChild(option);
+            });
+            
+            // Show the shell section
+            shellSection.style.display = 'block';
+            
+            // Scroll to shell section
+            shellSection.scrollIntoView({ behavior: 'smooth' });
         }
 
         function showAlert(message, type) {
@@ -1029,6 +1163,124 @@
                 messageDiv.textContent = message;
             }
         }
+
+        // Shell functionality
+        let socket = null;
+        let shellActive = false;
+        let containers = [];
+
+        // Initialize Socket.IO
+        function initSocket() {
+            if (socket) {
+                socket.disconnect();
+            }
+            
+            socket = io();
+            
+            socket.on('connect', function() {
+                updateShellStatus('connected', 'Connected to server');
+            });
+            
+            socket.on('disconnect', function() {
+                updateShellStatus('disconnected', 'Disconnected from server');
+                shellActive = false;
+                updateShellButtons();
+            });
+            
+            socket.on('shell_started', function(data) {
+                updateShellStatus('connected', 'Shell started');
+                shellActive = true;
+                updateShellButtons();
+                document.getElementById('shellInput').disabled = false;
+                document.getElementById('shellInput').focus();
+                appendShellOutput('Shell started successfully.\n');
+            });
+            
+            socket.on('shell_stopped', function(data) {
+                updateShellStatus('disconnected', 'Shell stopped');
+                shellActive = false;
+                updateShellButtons();
+                document.getElementById('shellInput').disabled = true;
+                appendShellOutput('Shell stopped.\n');
+            });
+            
+            socket.on('shell_output', function(data) {
+                appendShellOutput(data.data);
+            });
+            
+            socket.on('shell_error', function(data) {
+                appendShellOutput(`Error: ${data.message}\n`);
+            });
+        }
+
+        function updateShellStatus(type, message) {
+            const statusDiv = document.getElementById('shellStatus');
+            statusDiv.className = `shell-status ${type}`;
+            statusDiv.querySelector('.status-text').textContent = message;
+        }
+
+        function updateShellButtons() {
+            const startBtn = document.getElementById('startShellBtn');
+            const stopBtn = document.getElementById('stopShellBtn');
+            const shellInput = document.getElementById('shellInput');
+            
+            startBtn.disabled = shellActive;
+            stopBtn.disabled = !shellActive;
+            shellInput.disabled = !shellActive;
+        }
+
+        function appendShellOutput(text) {
+            const output = document.getElementById('shellOutput');
+            output.innerHTML += text;
+            output.scrollTop = output.scrollHeight;
+        }
+
+        // Shell event handlers
+        document.addEventListener('DOMContentLoaded', function() {
+            // Initialize socket
+            initSocket();
+            
+            // Shell button event handlers
+            document.getElementById('startShellBtn').addEventListener('click', function() {
+                const containerName = document.getElementById('shellContainerSelect').value;
+                socket.emit('start_shell', {
+                    session_id: currentSessionId,
+                    container_name: containerName || null
+                });
+                updateShellStatus('connecting', 'Starting shell...');
+            });
+            
+            document.getElementById('stopShellBtn').addEventListener('click', function() {
+                socket.emit('stop_shell', {
+                    session_id: currentSessionId
+                });
+            });
+            
+            document.getElementById('clearShellBtn').addEventListener('click', function() {
+                document.getElementById('shellOutput').innerHTML = '';
+            });
+            
+            document.getElementById('closeShellBtn').addEventListener('click', function() {
+                if (shellActive) {
+                    socket.emit('stop_shell', {
+                        session_id: currentSessionId
+                    });
+                }
+                document.getElementById('shellSection').style.display = 'none';
+            });
+            
+            // Shell input handler
+            document.getElementById('shellInput').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter' && shellActive) {
+                    const command = this.value;
+                    socket.emit('shell_input', {
+                        session_id: currentSessionId,
+                        command: command + '\n'
+                    });
+                    this.value = '';
+                }
+            });
+        });
     </script>
 
     <!-- Progress Modal -->
@@ -1042,6 +1294,33 @@
                 <div id="progressSteps" class="progress-steps">
                     <!-- Progress steps will be added here -->
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Interactive Shell Section -->
+    <div class="shell-section" id="shellSection" style="display: none;">
+        <div class="shell-header">
+            <h3>🐚 Interactive Shell</h3>
+            <div class="shell-controls">
+                <select id="shellContainerSelect" class="form-control">
+                    <option value="">Host Shell</option>
+                </select>
+                <button id="startShellBtn" class="btn btn-success">Start Shell</button>
+                <button id="stopShellBtn" class="btn btn-danger" disabled>Stop Shell</button>
+                <button id="clearShellBtn" class="btn btn-primary">Clear</button>
+                <button id="closeShellBtn" class="btn btn-secondary">Close Shell</button>
+            </div>
+        </div>
+        
+        <div class="shell-status" id="shellStatus">
+            <span class="status-text">Disconnected</span>
+        </div>
+        
+        <div class="shell-terminal">
+            <div id="shellOutput" class="shell-output"></div>
+            <div class="shell-input-container">
+                <input type="text" id="shellInput" placeholder="Enter command..." disabled>
             </div>
         </div>
     </div>

@@ -56,7 +56,7 @@ class GPUServerManager:
             print(f"❌ SSH connection failed: {type(e).__name__}: {str(e)}")
             return False, f"SSH connection failed: {str(e)}"
     
-    def _run(self, cmd: str, *, login_shell: bool = True, get_pty: bool = False, timeout: int = 120, interactive_input: str = None):
+    def _run(self, cmd: str, *, login_shell: bool = True, get_pty: bool = False, timeout: int = 60, interactive_input: str = None):
         """
         Execute command with proper shell handling and keepalive.
         
@@ -64,7 +64,7 @@ class GPUServerManager:
             cmd (str): Command to execute
             login_shell (bool): Whether to use login shell
             get_pty (bool): Whether to allocate pseudo-terminal
-            timeout (int): Command timeout in seconds
+            timeout (int): Command timeout in seconds (reduced default from 120 to 60)
             interactive_input (str): Input to send for interactive commands
             
         Returns:
@@ -76,7 +76,7 @@ class GPUServerManager:
         # Set keepalive on transport
         t = self.ssh_client.get_transport()
         if t: 
-            t.set_keepalive(30)
+            t.set_keepalive(15)  # Reduced from 30 to 15 seconds
         
         # Ensure PATH is loaded properly
         if login_shell:
@@ -397,33 +397,40 @@ exec jupyter notebook --no-browser --ip=0.0.0.0 --port=8888 --allow-root --Noteb
         """Clean up SSH connection and tunnel."""
         print(f"🧹 Cleaning up SSH tunnel and connection...")
         
-        # Clean up SSH tunnel process
+        # Clean up SSH tunnel process with reduced timeout
         if self.ssh_tunnel_process:
             try:
                 print(f"🛑 Terminating SSH tunnel process...")
                 self.ssh_tunnel_process.terminate()
-                self.ssh_tunnel_process.wait(timeout=5)
+                self.ssh_tunnel_process.wait(timeout=2)  # Reduced from 5 to 2 seconds
                 print(f"✅ SSH tunnel process terminated")
             except:
                 print(f"⚠️ Force killing SSH tunnel process...")
                 self.ssh_tunnel_process.kill()
         
-        # Clean up SSH client
+        # Clean up SSH client with timeout
         if self.ssh_client:
             try:
                 print(f"🔌 Closing SSH connection...")
+                # Set a shorter timeout for SSH operations
+                transport = self.ssh_client.get_transport()
+                if transport:
+                    transport.set_keepalive(5)  # Reduce keepalive
                 self.ssh_client.close()
                 print(f"✅ SSH connection closed")
             except Exception as e:
                 print(f"⚠️ Error closing SSH connection: {e}")
         
-        # Clean up any remaining SSH processes on local ports
+        # Clean up any remaining SSH processes on local ports (non-blocking)
         if self.local_port:
             try:
                 print(f"🧹 Cleaning up local port {self.local_port}...")
-                cleanup_cmd = f"lsof -ti:{self.local_port} | xargs kill -9 2>/dev/null || true"
-                subprocess.run(cleanup_cmd, shell=True, capture_output=True)
+                # Use non-blocking cleanup with shorter timeout
+                cleanup_cmd = f"timeout 3 lsof -ti:{self.local_port} | xargs kill -9 2>/dev/null || true"
+                subprocess.run(cleanup_cmd, shell=True, capture_output=True, timeout=3)
                 print(f"✅ Local port {self.local_port} cleaned up")
+            except subprocess.TimeoutExpired:
+                print(f"⚠️ Port cleanup timeout for {self.local_port}")
             except Exception as e:
                 print(f"⚠️ Error cleaning up local port {self.local_port}: {e}")
     
@@ -464,6 +471,44 @@ exec jupyter notebook --no-browser --ip=0.0.0.0 --port=8888 --allow-root --Noteb
             print(f"❌ Error stopping Jupyter: {str(e)}")
             return False, f"Error stopping Jupyter: {str(e)}"
 
+    def create_interactive_shell(self, container_name=None):
+        """
+        Create an interactive shell session.
+        
+        Args:
+            container_name (str): Optional container name to execute shell inside
+            
+        Returns:
+            paramiko.Channel: SSH channel for interactive shell
+        """
+        if not self.ssh_client:
+            raise Exception("No SSH connection established")
+        
+        # Create interactive shell channel
+        channel = self.ssh_client.invoke_shell()
+        channel.settimeout(0.1)  # Non-blocking
+        
+        # If container is specified, execute shell inside it
+        if container_name:
+            # First, ensure container is running
+            self.execute_command(f"/opt/aime-ml-containers/mlc-start {container_name}")
+            time.sleep(1)
+            
+            # Get container ID
+            success, container_id = self.execute_command(
+                f"docker ps --filter 'name={container_name}' --format '{{{{.ID}}}}'"
+            )
+            if not success or not container_id.strip():
+                raise Exception(f"Container {container_name} not found")
+            
+            container_id = container_id.strip()
+            
+            # Send command to enter container
+            channel.send(f"docker exec -it {container_id} bash\n")
+            time.sleep(1)
+        
+        return channel
+    
     def get_jupyter_token(self, container_name):
         """
         Get JupyterLab status (authentication disabled - no token needed).

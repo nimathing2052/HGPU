@@ -7,6 +7,7 @@ Handles user sessions, authentication, and session cleanup for the GPU server ap
 import time
 import threading
 from typing import Dict, Any, Optional
+import concurrent.futures
 
 class SessionManager:
     """Manages user sessions and authentication state."""
@@ -77,11 +78,20 @@ class SessionManager:
                 session = self.sessions[session_id]
                 manager = session['manager']
                 
-                # Cleanup manager resources
+                # Cleanup manager resources with timeout
                 if hasattr(manager, 'cleanup'):
                     try:
-                        manager.cleanup()
-                        print(f"🧹 Cleaned up manager for session: {session_id}")
+                        # Use threading to avoid blocking
+                        cleanup_thread = threading.Thread(
+                            target=self._cleanup_manager_with_timeout,
+                            args=(manager, session_id),
+                            daemon=True
+                        )
+                        cleanup_thread.start()
+                        cleanup_thread.join(timeout=10)  # 10 second timeout
+                        
+                        if cleanup_thread.is_alive():
+                            print(f"⚠️ Cleanup timeout for session: {session_id}")
                     except Exception as e:
                         print(f"⚠️ Error cleaning up manager for session {session_id}: {e}")
                 
@@ -90,6 +100,14 @@ class SessionManager:
                 print(f"🗑️ Session removed: {session_id}")
                 return True
             return False
+    
+    def _cleanup_manager_with_timeout(self, manager, session_id: str) -> None:
+        """Cleanup manager with timeout handling."""
+        try:
+            manager.cleanup()
+            print(f"🧹 Cleaned up manager for session: {session_id}")
+        except Exception as e:
+            print(f"⚠️ Error in cleanup thread for session {session_id}: {e}")
     
     def cleanup_expired_sessions(self) -> int:
         """
@@ -147,11 +165,59 @@ class SessionManager:
     def shutdown(self) -> None:
         """Shutdown the session manager and cleanup all sessions."""
         print(f"🛑 Shutting down session manager...")
+        
         with self._lock:
             session_ids = list(self.sessions.keys())
+        
+        if not session_ids:
+            print(f"✅ No active sessions to cleanup")
+            return
+        
+        print(f"🔄 Cleaning up {len(session_ids)} active sessions...")
+        
+        # Use ThreadPoolExecutor for parallel cleanup with timeout
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(session_ids), 5)) as executor:
+            # Submit cleanup tasks
+            future_to_session = {}
             for session_id in session_ids:
-                self.remove_session(session_id)
+                future = executor.submit(self._cleanup_session_async, session_id)
+                future_to_session[future] = session_id
+            
+            # Wait for completion with timeout
+            try:
+                for future in concurrent.futures.as_completed(future_to_session, timeout=30):
+                    session_id = future_to_session[future]
+                    try:
+                        future.result(timeout=5)  # Individual task timeout
+                    except concurrent.futures.TimeoutError:
+                        print(f"⚠️ Cleanup timeout for session: {session_id}")
+                    except Exception as e:
+                        print(f"⚠️ Error cleaning up session {session_id}: {e}")
+            except concurrent.futures.TimeoutError:
+                print(f"⚠️ Overall cleanup timeout after 30 seconds")
+        
         print(f"✅ Session manager shutdown complete")
+    
+    def _cleanup_session_async(self, session_id: str) -> None:
+        """Asynchronous session cleanup for parallel execution."""
+        with self._lock:
+            if session_id not in self.sessions:
+                return
+            
+            session = self.sessions[session_id]
+            manager = session['manager']
+            
+            # Cleanup manager resources
+            if hasattr(manager, 'cleanup'):
+                try:
+                    manager.cleanup()
+                    print(f"🧹 Cleaned up manager for session: {session_id}")
+                except Exception as e:
+                    print(f"⚠️ Error cleaning up manager for session {session_id}: {e}")
+            
+            # Remove session
+            del self.sessions[session_id]
+            print(f"🗑️ Session removed: {session_id}")
 
 # Global session manager instance
 session_manager = SessionManager()

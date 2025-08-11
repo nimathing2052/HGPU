@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Shell - Hertie GPU Server</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
+    <style>
+        body {
+            font-family: 'Courier New', monospace;
+            background-color: #1e1e1e;
+            color: #ffffff;
+            margin: 0;
+            padding: 20px;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding: 10px;
+            background-color: #2d2d2d;
+            border-radius: 5px;
+        }
+        
+        .header h1 {
+            margin: 0;
+            color: #00ff00;
+        }
+        
+        .controls {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 14px;
+        }
+        
+        .btn-primary {
+            background-color: #007acc;
+            color: white;
+        }
+        
+        .btn-danger {
+            background-color: #dc3545;
+            color: white;
+        }
+        
+        .btn-success {
+            background-color: #28a745;
+            color: white;
+        }
+        
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        
+        .terminal-container {
+            flex: 1;
+            background-color: #000000;
+            border: 1px solid #333;
+            border-radius: 5px;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .terminal-output {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px;
+            background-color: #000000;
+            color: #00ff00;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.4;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        
+        .terminal-input {
+            display: flex;
+            margin-top: 10px;
+        }
+        
+        .terminal-input input {
+            flex: 1;
+            background-color: #000000;
+            color: #00ff00;
+            border: 1px solid #333;
+            padding: 8px 12px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            outline: none;
+        }
+        
+        .terminal-input input:focus {
+            border-color: #007acc;
+        }
+        
+        .status {
+            padding: 10px;
+            margin-bottom: 10px;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        
+        .status.connected {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .status.disconnected {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .status.connecting {
+            background-color: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+        
+        .container-selector {
+            margin-bottom: 10px;
+        }
+        
+        .container-selector select {
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid #333;
+            background-color: #2d2d2d;
+            color: white;
+            font-family: inherit;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🐚 Interactive Shell</h1>
+        <div class="controls">
+            <button id="startBtn" class="btn btn-success">Start Shell</button>
+            <button id="stopBtn" class="btn btn-danger" disabled>Stop Shell</button>
+            <button id="clearBtn" class="btn btn-primary">Clear</button>
+            <a href="/containers" class="btn btn-primary">Back to Containers</a>
+        </div>
+    </div>
+    
+    <div id="status" class="status disconnected">
+        Disconnected
+    </div>
+    
+    <div class="container-selector">
+        <label for="containerSelect">Container (optional):</label>
+        <select id="containerSelect">
+            <option value="">Host Shell</option>
+            <option value="nima-container">nima-container</option>
+            <option value="test-container">test-container</option>
+        </select>
+    </div>
+    
+    <div class="terminal-container">
+        <div id="terminalOutput" class="terminal-output"></div>
+        <div class="terminal-input">
+            <input type="text" id="terminalInput" placeholder="Enter command..." disabled>
+        </div>
+    </div>
+    
+    <script>
+        // Get session ID and container from URL parameters
+        const urlParams = new URLSearchParams(window.location.search);
+        const sessionId = urlParams.get('session_id');
+        const containerName = urlParams.get('container');
+        
+        if (!sessionId) {
+            alert('No session ID provided. Please authenticate first.');
+            window.location.href = '/';
+        }
+        
+        // Initialize Socket.IO
+        const socket = io();
+        
+        // DOM elements
+        const statusDiv = document.getElementById('status');
+        const terminalOutput = document.getElementById('terminalOutput');
+        const terminalInput = document.getElementById('terminalInput');
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const clearBtn = document.getElementById('clearBtn');
+        const containerSelect = document.getElementById('containerSelect');
+        
+        let shellActive = false;
+        
+        // Auto-select container if provided in URL
+        if (containerName) {
+            containerSelect.value = containerName;
+        }
+        
+        // Socket event handlers
+        socket.on('connect', function() {
+            updateStatus('connected', 'Connected to server');
+        });
+        
+        socket.on('disconnect', function() {
+            updateStatus('disconnected', 'Disconnected from server');
+            shellActive = false;
+            updateButtons();
+        });
+        
+        socket.on('shell_started', function(data) {
+            updateStatus('connected', 'Shell started');
+            shellActive = true;
+            updateButtons();
+            terminalInput.disabled = false;
+            terminalInput.focus();
+            appendOutput('Shell started successfully.\n');
+        });
+        
+        socket.on('shell_stopped', function(data) {
+            updateStatus('disconnected', 'Shell stopped');
+            shellActive = false;
+            updateButtons();
+            terminalInput.disabled = true;
+            appendOutput('Shell stopped.\n');
+        });
+        
+        socket.on('shell_output', function(data) {
+            appendOutput(data.data);
+        });
+        
+        socket.on('shell_error', function(data) {
+            appendOutput(`Error: ${data.message}\n`);
+        });
+        
+        // Button event handlers
+        startBtn.addEventListener('click', function() {
+            const containerName = containerSelect.value;
+            socket.emit('start_shell', {
+                session_id: sessionId,
+                container_name: containerName || null
+            });
+            updateStatus('connecting', 'Starting shell...');
+        });
+        
+        stopBtn.addEventListener('click', function() {
+            socket.emit('stop_shell', {
+                session_id: sessionId
+            });
+        });
+        
+        clearBtn.addEventListener('click', function() {
+            terminalOutput.innerHTML = '';
+        });
+        
+        // Terminal input handler
+        terminalInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter' && shellActive) {
+                const command = terminalInput.value;
+                socket.emit('shell_input', {
+                    session_id: sessionId,
+                    command: command + '\n'
+                });
+                terminalInput.value = '';
+            }
+        });
+        
+        // Utility functions
+        function updateStatus(type, message) {
+            statusDiv.className = `status ${type}`;
+            statusDiv.textContent = message;
+        }
+        
+        function updateButtons() {
+            startBtn.disabled = shellActive;
+            stopBtn.disabled = !shellActive;
+        }
+        
+        function appendOutput(text) {
+            terminalOutput.innerHTML += text;
+            terminalOutput.scrollTop = terminalOutput.scrollHeight;
+        }
+        
+        // Auto-scroll to bottom when new content is added
+        const observer = new MutationObserver(function() {
+            terminalOutput.scrollTop = terminalOutput.scrollHeight;
+        });
+        
+        observer.observe(terminalOutput, {
+            childList: true,
+            subtree: true
+        });
+    </script>
+</body>
+</html>
