@@ -1,0 +1,864 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Container Management - Hertie GPU Server</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .content {
+            padding: 30px;
+        }
+
+        .section {
+            margin-bottom: 40px;
+        }
+
+        .section h2 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 1.8em;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #555;
+        }
+
+        .form-group input, .form-group select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e1e5e9;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s ease;
+        }
+
+        .form-group input:focus, .form-group select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 12px 30px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-secondary {
+            background: linear-gradient(135deg, #6c757d 0%, #495057 100%);
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+        }
+
+        .btn-danger {
+            background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+        }
+
+        .btn-warning {
+            background: linear-gradient(135deg, #ffc107 0%, #e0a800 100%);
+            color: #212529;
+        }
+
+        .containers-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .container-card {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 20px;
+            border-left: 4px solid #667eea;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .container-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+        }
+
+        .container-card.running {
+            border-left-color: #28a745;
+            background: linear-gradient(135deg, #f8f9fa 0%, #e8f5e8 100%);
+        }
+
+        .container-card.stopped {
+            border-left-color: #dc3545;
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffe8e8 100%);
+        }
+
+        .container-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .container-name {
+            font-size: 1.2em;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .container-status {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.9em;
+            font-weight: 500;
+        }
+
+        .status-running {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-stopped {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .container-info {
+            margin-bottom: 15px;
+        }
+
+        .info-item {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-size: 0.95em;
+        }
+
+        .info-label {
+            color: #666;
+            font-weight: 500;
+        }
+
+        .info-value {
+            color: #333;
+            font-weight: 600;
+        }
+
+        .container-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .btn-small {
+            padding: 8px 16px;
+            font-size: 14px;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .alert {
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .alert-success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .alert-error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .new-container-form {
+            background: #e8f4fd;
+            border: 1px solid #bee5eb;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 30px;
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #2c3e50;
+            font-size: 0.9em;
+        }
+
+        input, select {
+            width: 100%;
+            padding: 10px 12px;
+            border: 2px solid #e1e8ed;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: border-color 0.3s ease;
+        }
+
+        input:focus, select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .container-details {
+            margin-bottom: 15px;
+        }
+
+        .detail-item {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 5px;
+            font-size: 0.9em;
+        }
+
+        .detail-label {
+            color: #6c757d;
+        }
+
+        .detail-value {
+            color: #2c3e50;
+            font-weight: 600;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.8em;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .status-up {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-exited {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        @media (max-width: 768px) {
+            .form-row {
+                grid-template-columns: 1fr;
+            }
+            
+            .containers-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Progress Modal Styles */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+        }
+
+        .modal-content {
+            background-color: #fefefe;
+            margin: 2% auto;
+            padding: 0;
+            border-radius: 10px;
+            width: 90%;
+            max-width: 800px;
+            max-height: 90vh;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        }
+
+        .modal-header {
+            padding: 20px;
+            border-bottom: 1px solid #e1e8ed;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 10px 10px 0 0;
+        }
+
+        .modal-header h3 {
+            margin: 0;
+            font-size: 1.2em;
+        }
+
+        .close {
+            color: white;
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        .close:hover {
+            opacity: 0.7;
+        }
+
+        .modal-body {
+            padding: 20px;
+            max-height: 600px;
+            overflow-y: auto;
+        }
+
+        .progress-steps {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .progress-step {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            padding: 15px;
+            border-radius: 8px;
+            background: #f8f9fa;
+            border-left: 4px solid #6c757d;
+            transition: all 0.3s ease;
+        }
+
+        .progress-step.completed {
+            background: #d4edda;
+            border-left-color: #28a745;
+        }
+
+        .progress-step.error {
+            background: #f8d7da;
+            border-left-color: #dc3545;
+        }
+
+        .progress-step.pending {
+            background: #fff3cd;
+            border-left-color: #ffc107;
+        }
+
+        .step-icon {
+            font-size: 1.5em;
+            min-width: 30px;
+            text-align: center;
+        }
+
+        .step-message {
+            flex: 1;
+            font-size: 0.95em;
+            line-height: 1.4;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📦 Container Management</h1>
+            <p>Manage your GPU containers and launch Jupyter sessions</p>
+        </div>
+
+        <div class="content">
+            <div id="alert-container"></div>
+
+            <!-- New Container Form -->
+            <div class="new-container-form">
+                <h3>🚀 Create New Container</h3>
+                <form id="new-container-form">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="container_name">Container Name</label>
+                            <input type="text" id="container_name" name="container_name" required 
+                                   placeholder="my-container">
+                        </div>
+                        <div class="form-group">
+                            <label for="framework">Framework</label>
+                            <select id="framework" name="framework" required>
+                                <option value="">Select Framework</option>
+                                <option value="Tensorflow">TensorFlow</option>
+                                <option value="Pytorch">PyTorch</option>
+                                <option value="Mxnet">MXNet</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="version">Version</label>
+                            <select id="version" name="version" required>
+                                <option value="">Select Version</option>
+                            </select>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn">Create Container</button>
+                </form>
+            </div>
+
+            <!-- Existing Containers -->
+            <h3>📋 Your Containers</h3>
+            <div id="containers-container">
+                <div class="loading" id="loading">
+                    <div class="spinner"></div>
+                    <p>Loading containers...</p>
+                </div>
+                <div id="containers-grid" class="containers-grid">
+                    <!-- Containers will be populated here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Framework versions mapping
+        const frameworkVersions = {
+            'Tensorflow': ['2.11.0', '2.10.0', '2.9.2-jlab', '2.9.0', '2.8.0', '2.7.0', '2.6.1', '2.5.0', '2.4.1', '2.4.0', '2.3.1-nvidia', '1.15.4-nvidia'],
+            'Pytorch': ['2.1.0-aime', '2.1.0', '2.0.1-aime', '2.0.1', '2.0.0', '1.14.0a-nvidia', '1.13.1-aime', '1.13.0a-nvidia', '1.12.1-aime'],
+            'Mxnet': ['1.8.0-nvidia']
+        };
+
+        let currentSessionId = null;
+
+        // Populate version dropdown based on framework selection
+        document.getElementById('framework').addEventListener('change', function() {
+            const framework = this.value;
+            const versionSelect = document.getElementById('version');
+            versionSelect.innerHTML = '<option value="">Select Version</option>';
+            
+            if (framework && frameworkVersions[framework]) {
+                frameworkVersions[framework].forEach(version => {
+                    const option = document.createElement('option');
+                    option.value = version;
+                    option.textContent = version;
+                    versionSelect.appendChild(option);
+                });
+            }
+        });
+
+        // Handle new container form submission
+        document.getElementById('new-container-form').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const formData = new FormData(this);
+            formData.append('session_id', currentSessionId);
+            
+            try {
+                const response = await fetch('/create-container', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showAlert('Container created successfully!', 'success');
+                    loadContainers(); // Refresh the list
+                    this.reset();
+                } else {
+                    showAlert(result.message, 'error');
+                }
+            } catch (error) {
+                showAlert('Error creating container: ' + error.message, 'error');
+            }
+        });
+
+        function loadContainers() {
+            const loading = document.getElementById('loading');
+            const containersGrid = document.getElementById('containers-grid');
+            
+            loading.style.display = 'block';
+            containersGrid.innerHTML = '';
+            
+            fetch('/get-containers?session_id=' + currentSessionId)
+                .then(response => response.json())
+                .then(result => {
+                    loading.style.display = 'none';
+                    
+                    if (result.success) {
+                        displayContainers(result.containers);
+                    } else {
+                        showAlert(result.message, 'error');
+                    }
+                })
+                .catch(error => {
+                    loading.style.display = 'none';
+                    showAlert('Error loading containers: ' + error.message, 'error');
+                });
+        }
+
+        function displayContainers(containers) {
+            const containersGrid = document.getElementById('containers-grid');
+            
+            if (containers.length === 0) {
+                containersGrid.innerHTML = '<p style="grid-column: 1/-1; text-align: center; color: #6c757d;">No containers found. Create your first container above!</p>';
+                return;
+            }
+            
+            containersGrid.innerHTML = containers.map(container => `
+                <div class="container-card">
+                    <div class="container-name">${container.name}</div>
+                    <div class="container-details">
+                        <div class="detail-item">
+                            <span class="detail-label">Framework:</span>
+                            <span class="detail-value">${container.framework}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label">Version:</span>
+                            <span class="detail-value">${container.version}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label">Status:</span>
+                            <span class="detail-value">
+                                <span class="status-badge ${container.status.toLowerCase().includes('up') ? 'status-up' : 'status-exited'}">
+                                    ${container.status}
+                                </span>
+                            </span>
+                        </div>
+                    </div>
+                    <div class="actions">
+                        ${container.status.toLowerCase().includes('up') ? 
+                            `<button class="btn btn-success" onclick="launchJupyter('${container.name}')">🌐 Launch Jupyter</button>` :
+                            `<button class="btn" onclick="startContainer('${container.name}')">▶️ Start</button>`
+                        }
+                        <button class="btn btn-secondary" onclick="openContainer('${container.name}')">🔧 Open Shell</button>
+                        <button class="btn btn-danger" onclick="stopContainer('${container.name}')">🛑 Stop</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        async function launchJupyter(containerName) {
+            // Show progress modal
+            showProgressModal();
+            
+            // Simulate progress steps with longer, more realistic timing
+            setTimeout(() => addProgressStep('🛑 Stopping any running Jupyter processes...', 'pending'), 500);
+            setTimeout(() => updateProgressStep('🛑 Stopping any running Jupyter processes...', 'completed'), 2000);
+            
+            setTimeout(() => addProgressStep('📦 Starting container...', 'pending'), 2100);
+            setTimeout(() => updateProgressStep('📦 Starting container...', 'completed'), 3500);
+            
+            setTimeout(() => addProgressStep('🔍 Finding container ID...', 'pending'), 3600);
+            setTimeout(() => updateProgressStep('🔍 Finding container ID...', 'completed'), 4500);
+            
+            setTimeout(() => addProgressStep('📁 Setting up workspace and environment...', 'pending'), 4600);
+            setTimeout(() => updateProgressStep('📁 Setting up workspace and environment...', 'completed'), 6000);
+            
+            setTimeout(() => addProgressStep('🌐 Starting Jupyter with authentication disabled...', 'pending'), 6100);
+            setTimeout(() => updateProgressStep('🌐 Starting Jupyter with authentication disabled...', 'completed'), 8000);
+            
+            setTimeout(() => addProgressStep('🔗 Setting up port forwarding...', 'pending'), 8100);
+            setTimeout(() => updateProgressStep('🔗 Setting up port forwarding...', 'completed'), 10000);
+            
+            setTimeout(() => addProgressStep('✅ Finalizing Jupyter setup...', 'pending'), 10100);
+            setTimeout(() => updateProgressStep('✅ Finalizing Jupyter setup...', 'completed'), 12000);
+            
+            try {
+                const response = await fetch('/launch-jupyter', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        session_id: currentSessionId,
+                        container_name: containerName
+                    })
+                });
+                
+                const result = await response.json();
+                
+                // Hide progress modal after a short delay to show completion
+                setTimeout(() => hideProgressModal(), 1500);
+                
+                if (result.success) {
+                    const jupyterUrl = result.jupyter_url;
+                    const token = result.token;
+                    
+                    let alertMessage = `JupyterLab launched successfully! <a href="${jupyterUrl}" target="_blank" class="btn btn-success" style="margin-left: 10px;">🌐 Open JupyterLab</a>`;
+                    
+                    alertMessage += `
+                    <div style="margin-top: 15px; padding: 10px; background: #d4edda; border-radius: 5px; border-left: 4px solid #28a745;">
+                        <strong>✅ No Authentication Required:</strong> 
+                        <br><small style="color: #155724;">JupyterLab is running without token or password authentication. You can access it directly!</small>
+                    </div>`;
+                    
+                    showAlert(alertMessage, 'success');
+                    window.open(jupyterUrl, '_blank');
+                } else {
+                    // If there's an error, update the last step to error
+                    updateProgressStep(`❌ Error: ${result.message}`, 'error');
+                    showAlert(result.message, 'error');
+                }
+            } catch (error) {
+                hideProgressModal();
+                updateProgressStep(`❌ Network Error: ${error.message}`, 'error');
+                showAlert('Error launching Jupyter: ' + error.message, 'error');
+            }
+        }
+
+        async function startContainer(containerName) {
+            try {
+                const response = await fetch('/start-container', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        session_id: currentSessionId,
+                        container_name: containerName
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showAlert('Container started successfully!', 'success');
+                    loadContainers(); // Refresh the list
+                } else {
+                    showAlert(result.message, 'error');
+                }
+            } catch (error) {
+                showAlert('Error starting container: ' + error.message, 'error');
+            }
+        }
+
+        async function stopContainer(containerName) {
+            if (!confirm(`Are you sure you want to stop container "${containerName}"?`)) {
+                return;
+            }
+            
+            try {
+                const response = await fetch('/stop-container', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        session_id: currentSessionId,
+                        container_name: containerName
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showAlert('Container stopped successfully!', 'success');
+                    loadContainers(); // Refresh the list
+                } else {
+                    showAlert(result.message, 'error');
+                }
+            } catch (error) {
+                showAlert('Error stopping container: ' + error.message, 'error');
+            }
+        }
+
+        function openContainer(containerName) {
+            showAlert('Shell access feature coming soon!', 'info');
+        }
+
+        function showAlert(message, type) {
+            const container = document.getElementById('alert-container');
+            container.innerHTML = `
+                <div class="alert alert-${type}">
+                    ${message}
+                </div>
+            `;
+            
+            // Auto-hide after 10 seconds for Jupyter launches (longer to read token)
+            const timeout = type === 'success' && message.includes('Jupyter') ? 10000 : 5000;
+            setTimeout(() => {
+                container.innerHTML = '';
+            }, timeout);
+        }
+        
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                // Show a brief success message
+                const button = event.target;
+                const originalText = button.textContent;
+                button.textContent = '✅ Copied!';
+                button.style.background = '#28a745';
+                setTimeout(() => {
+                    button.textContent = originalText;
+                    button.style.background = '';
+                }, 2000);
+            }).catch(err => {
+                console.error('Failed to copy: ', err);
+                alert('Failed to copy token. Please copy it manually.');
+            });
+        }
+
+        // Load containers on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            // Get session ID from URL parameters or localStorage
+            const urlParams = new URLSearchParams(window.location.search);
+            currentSessionId = urlParams.get('session_id') || localStorage.getItem('session_id');
+            
+            if (currentSessionId) {
+                loadContainers();
+            } else {
+                showAlert('No active session found. Please authenticate first.', 'error');
+            }
+        });
+
+        // Progress Modal Functions
+        function showProgressModal() {
+            const modal = document.getElementById('progressModal');
+            const progressSteps = document.getElementById('progressSteps');
+            
+            // Clear previous steps
+            progressSteps.innerHTML = '';
+            
+            // Add initial step
+            addProgressStep('🚀 Starting JupyterLab launch process...', 'pending');
+            
+            modal.style.display = 'block';
+        }
+        
+        function hideProgressModal() {
+            const modal = document.getElementById('progressModal');
+            modal.style.display = 'none';
+        }
+        
+        function addProgressStep(message, status = 'pending') {
+            const progressSteps = document.getElementById('progressSteps');
+            const stepDiv = document.createElement('div');
+            stepDiv.className = `progress-step ${status}`;
+            stepDiv.innerHTML = `
+                <div class="step-icon">
+                    ${status === 'completed' ? '✅' : status === 'error' ? '❌' : '⏳'}
+                </div>
+                <div class="step-message">${message}</div>
+            `;
+            progressSteps.appendChild(stepDiv);
+            progressSteps.scrollTop = progressSteps.scrollHeight;
+        }
+        
+        function updateProgressStep(message, status) {
+            const steps = document.querySelectorAll('.progress-step');
+            if (steps.length > 0) {
+                const lastStep = steps[steps.length - 1];
+                lastStep.className = `progress-step ${status}`;
+                const icon = lastStep.querySelector('.step-icon');
+                const messageDiv = lastStep.querySelector('.step-message');
+                
+                icon.innerHTML = status === 'completed' ? '✅' : status === 'error' ? '❌' : '⏳';
+                messageDiv.textContent = message;
+            }
+        }
+    </script>
+
+    <!-- Progress Modal -->
+    <div id="progressModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>🚀 Launching JupyterLab</h3>
+                <span class="close" onclick="hideProgressModal()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div id="progressSteps" class="progress-steps">
+                    <!-- Progress steps will be added here -->
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
