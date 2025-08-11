@@ -89,3 +89,4 @@ def test_manual_removal():
 if __name__ == "__main__":
     success = test_manual_removal()
     exit(0 if success else 1)
+
