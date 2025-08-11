@@ -24,13 +24,9 @@ from port_utils import find_available_local_port, find_available_flask_port, cle
 # Import session manager
 from session_manager import session_manager
 
-app = Flask(__name__)
-app.config['SECRET_KEY'] = SECRET_KEY
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
-
-# Import configuration
+# Import configuration first
 try:
-    from config import SERVER_HOST, SERVER_PORT, LOCAL_PORT_RANGE, FLASK_HOST, FLASK_PORT, FLASK_DEBUG
+    from config import SERVER_HOST, SERVER_PORT, LOCAL_PORT_RANGE, FLASK_HOST, FLASK_PORT, FLASK_DEBUG, SECRET_KEY
 except ImportError:
     # Fallback configuration if config.py is not available
     SERVER_HOST = "10.1.23.20"
@@ -39,6 +35,11 @@ except ImportError:
     FLASK_HOST = "0.0.0.0"
     FLASK_PORT = 2344
     FLASK_DEBUG = False
+    SECRET_KEY = 'your-secret-key-change-in-production'
+
+app = Flask(__name__)
+app.config['SECRET_KEY'] = SECRET_KEY
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 # Store active sessions (in production, use Redis or similar)
 
@@ -89,7 +90,15 @@ def strip_ansi_codes(text):
 
 @app.route('/')
 def index():
-    """Main page with authentication form"""
+    """Main page with authentication form and health check"""
+    # Check if this is a health check request (Railway sends specific headers)
+    user_agent = request.headers.get('User-Agent', '')
+    if 'Railway' in user_agent or 'healthcheck' in user_agent.lower():
+        return jsonify({
+            'status': 'ok',
+            'message': 'Hertie GPU Server Automation App is running',
+            'timestamp': datetime.now().isoformat()
+        })
     return render_template('index.html')
 
 @app.route('/containers')
@@ -120,6 +129,11 @@ def api_status():
         'message': 'Hertie GPU Server Automation App is running',
         'timestamp': datetime.now().isoformat()
     })
+
+@app.route('/ping')
+def ping():
+    """Simple ping endpoint for health checks"""
+    return "pong"
 
 @app.route('/authenticate', methods=['POST'])
 def authenticate():

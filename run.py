@@ -101,17 +101,20 @@ def main():
     
     try:
         # Import and run the Flask app
+        print("📦 Importing Flask app...")
         from app import app
+        print("✅ Flask app imported successfully")
         
         # Get port from environment (Railway) or config
         port = int(os.getenv('PORT', 2344))
-        
-        print(f"📡 Server will be available at: http://localhost:{port}")
+        print(f"🔌 Using port: {port}")
         print(f"🌍 Environment: {os.getenv('FLASK_ENV', 'development')}")
         print(f"🔧 Debug mode: {os.getenv('FLASK_DEBUG', 'False')}")
+        print(f"🏠 Host: 0.0.0.0")
         print("🛑 Press Ctrl+C to stop the server\n")
         
         # Run the Flask app
+        print("🚀 Starting Flask server...")
         app.run(debug=False, host='0.0.0.0', port=port, threaded=True)
         
     except KeyboardInterrupt:
