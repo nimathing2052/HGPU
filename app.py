@@ -25,7 +25,8 @@ from port_utils import find_available_local_port, find_available_flask_port, cle
 from session_manager import session_manager
 
 app = Flask(__name__)
-socketio = SocketIO(app, cors_allowed_origins="*")
+app.config['SECRET_KEY'] = SECRET_KEY
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 # Import configuration
 try:
@@ -100,6 +101,16 @@ def containers():
 def shell():
     """Interactive shell page"""
     return render_template('shell.html')
+
+@app.route('/health')
+def health_check():
+    """Health check endpoint for Railway monitoring"""
+    return jsonify({
+        'status': 'healthy',
+        'timestamp': datetime.now().isoformat(),
+        'version': '1.0.0',
+        'session_count': session_manager.get_session_count()
+    })
 
 @app.route('/authenticate', methods=['POST'])
 def authenticate():

@@ -1,15 +1,18 @@
 """
 Configuration settings for the Hertie GPU Server Automation App
+Supports both local development and cloud deployment via environment variables.
 """
 
+import os
+
 # Server Configuration
-SERVER_HOST = "10.1.23.20"
-SERVER_PORT = 22
+SERVER_HOST = os.getenv('GPU_SERVER_HOST', "10.1.23.20")
+SERVER_PORT = int(os.getenv('GPU_SERVER_PORT', "22"))
 
 # Flask Configuration
-FLASK_HOST = "0.0.0.0"
-FLASK_PORT = 2344
-FLASK_DEBUG = False
+FLASK_HOST = os.getenv('FLASK_HOST', "0.0.0.0")
+FLASK_PORT = int(os.getenv('PORT', os.getenv('FLASK_PORT', "2344")))  # Railway uses PORT env var
+FLASK_DEBUG = os.getenv('FLASK_DEBUG', 'False').lower() == 'true'
 
 # Port Configuration
 LOCAL_PORT_RANGE = range(9000, 9100)  # Range for local port forwarding
@@ -23,9 +26,12 @@ FRAMEWORK_VERSIONS = {
 }
 
 # Session Configuration
-SESSION_TIMEOUT = 3600  # 1 hour in seconds
-MAX_SESSIONS_PER_USER = 5
+SESSION_TIMEOUT = int(os.getenv('SESSION_TIMEOUT', "3600"))  # 1 hour in seconds
+MAX_SESSIONS_PER_USER = int(os.getenv('MAX_SESSIONS_PER_USER', "5"))
 
 # Logging Configuration
-LOG_LEVEL = "INFO"
+LOG_LEVEL = os.getenv('LOG_LEVEL', "INFO")
 LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# Security Configuration
+SECRET_KEY = os.getenv('SECRET_KEY', 'your-secret-key-change-in-production')

@@ -39,7 +39,9 @@ A comprehensive web-based automation tool for managing GPU containers and Jupyte
 - Network access to the server
 - Modern web browser with JavaScript enabled
 
-## 🛠️ Installation
+## 🛠️ Installation & Deployment
+
+### Local Development
 
 1. **Clone or download the project files**
 
@@ -51,6 +53,27 @@ A comprehensive web-based automation tool for managing GPU containers and Jupyte
 3. **Configure the application** (optional):
    - Edit `config.py` to modify server settings, ports, or timeouts
    - Default configuration is optimized for the Hertie GPU server
+
+### Cloud Deployment (Railway)
+
+This app is optimized for Railway deployment with zero configuration required!
+
+**Quick Deploy:**
+1. **Fork this repository** to your GitHub account
+2. **Sign up** at [railway.app](https://railway.app) (free, no credit card)
+3. **Create new project** → "Deploy from GitHub repo"
+4. **Select your forked repository**
+5. **Set environment variables** (see [DEPLOYMENT.md](DEPLOYMENT.md))
+6. **Deploy!** 🚀
+
+**Benefits of Railway:**
+- ✅ **Free tier**: 500 hours/month
+- ✅ **Automatic deployments** from Git
+- ✅ **SSL certificates** included
+- ✅ **Global CDN** for fast access
+- ✅ **No server management** required
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed deployment instructions.
 
 ## 🎯 Usage
 
@@ -236,6 +259,21 @@ This provides detailed error messages and auto-reload on code changes.
 - **Paramiko**: SSH client library with interactive support
 - **Werkzeug**: WSGI utilities
 - **Cryptography**: Security utilities for SSH connections
+- **Flask-SocketIO**: WebSocket support for interactive shell
+- **Gunicorn**: Production WSGI server (for deployment)
+- **Eventlet**: Async networking library
+
+## 🚀 Deployment Files
+
+The following files are included for Railway deployment:
+
+- **`Procfile`**: Tells Railway how to run the app
+- **`runtime.txt`**: Specifies Python version (3.9.18)
+- **`railway.json`**: Railway-specific configuration
+- **`nixpacks.toml`**: Build configuration with SSH support
+- **`requirements.txt`**: Python dependencies
+- **`env.example`**: Environment variables template
+- **`DEPLOYMENT.md`**: Comprehensive deployment guide
 
 ## 📄 License
 
