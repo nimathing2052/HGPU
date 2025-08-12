@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Container Management - Hertie GPU Server</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         * {
             margin: 0;
@@ -14,39 +15,156 @@
 
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: url("{{ url_for('static', filename='background.jpg') }}");
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            background-attachment: fixed;
             min-height: 100vh;
-            padding: 20px;
+            padding: 20px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
 
         .container {
-            max-width: 1200px;
+            max-width: 100%;
+            width: 100%;
             margin: 0 auto;
-            background: white;
+            background: rgba(255, 255, 255, 0.4);
             border-radius: 15px;
-            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            box-shadow: 0 20px 40px rgba(0,0,0,0.15);
             overflow: hidden;
+            backdrop-filter: blur(20px);
         }
 
         .header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, rgba(102, 126, 234, 0.6) 0%, rgba(118, 75, 162, 0.6) 100%);
             color: white;
             padding: 30px;
             text-align: center;
+            backdrop-filter: blur(15px);
         }
 
         .header h1 {
             font-size: 2.5em;
             margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
         }
 
         .header p {
             font-size: 1.1em;
             opacity: 0.9;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.3);
+        }
+
+        .session-info {
+            background: rgba(255,255,255,0.15);
+            padding: 12px 16px;
+            border-radius: 12px;
+            font-size: 0.95em;
+            margin-bottom: 8px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.2);
+            min-width: 200px;
+        }
+
+        .session-info strong {
+            color: #fff;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.3);
+        }
+
+        .session-id-display {
+            word-break: break-all;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 12px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .btn::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+            transition: left 0.5s;
+        }
+
+        .btn:hover::before {
+            left: 100%;
+        }
+
+        .btn:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn:active {
+            transform: translateY(-1px);
+        }
+
+        .btn-warning {
+            background: linear-gradient(135deg, #ffc107 0%, #e0a800 100%);
+            color: #212529;
+            box-shadow: 0 4px 15px rgba(255, 193, 7, 0.3);
+        }
+
+        .btn-warning:hover {
+            box-shadow: 0 8px 25px rgba(255, 193, 7, 0.4);
+        }
+
+        .btn-secondary {
+            background: linear-gradient(135deg, #6c757d 0%, #495057 100%);
+            box-shadow: 0 4px 15px rgba(108, 117, 125, 0.3);
+        }
+
+        .btn-secondary:hover {
+            box-shadow: 0 8px 25px rgba(108, 117, 125, 0.4);
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+            box-shadow: 0 4px 15px rgba(40, 167, 69, 0.3);
+        }
+
+        .btn-success:hover {
+            box-shadow: 0 8px 25px rgba(40, 167, 69, 0.4);
+        }
+
+        .btn-danger {
+            background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+            box-shadow: 0 4px 15px rgba(220, 53, 69, 0.3);
+        }
+
+        .btn-danger:hover {
+            box-shadow: 0 8px 25px rgba(220, 53, 69, 0.4);
+        }
+
+        .logout-icon {
+            margin-right: 8px;
+            font-size: 16px;
         }
 
         .content {
-            padding: 30px;
+            padding: 50px 30px;
         }
 
         .section {
@@ -133,26 +251,27 @@
         }
 
         .container-card {
-            background: #f8f9fa;
+            background: rgba(248, 249, 250, 0.9);
             border-radius: 12px;
             padding: 20px;
             border-left: 4px solid #667eea;
             transition: transform 0.2s ease, box-shadow 0.2s ease;
+            backdrop-filter: blur(5px);
         }
 
         .container-card:hover {
             transform: translateY(-5px);
-            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.15);
         }
 
         .container-card.running {
             border-left-color: #28a745;
-            background: linear-gradient(135deg, #f8f9fa 0%, #e8f5e8 100%);
+            background: linear-gradient(135deg, rgba(248, 249, 250, 0.9) 0%, rgba(232, 245, 232, 0.9) 100%);
         }
 
         .container-card.stopped {
             border-left-color: #dc3545;
-            background: linear-gradient(135deg, #f8f9fa 0%, #ffe8e8 100%);
+            background: linear-gradient(135deg, rgba(248, 249, 250, 0.9) 0%, rgba(255, 232, 232, 0.9) 100%);
         }
 
         .container-header {
@@ -343,7 +462,58 @@
             flex-wrap: wrap;
         }
 
+        .action-icon {
+            width: 20px;
+            height: 20px;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+
+        .btn-secondary .action-icon {
+            /* No filter - display original colors */
+        }
+
+        .btn-success .action-icon {
+            /* No filter - display original colors */
+        }
+
         @media (max-width: 768px) {
+            .container {
+                max-width: 95%;
+                margin: 10px;
+            }
+            
+            .header {
+                padding: 20px;
+            }
+            
+            .header h1 {
+                font-size: 2em;
+            }
+            
+            .session-info {
+                min-width: 150px;
+                font-size: 0.85em;
+            }
+            
+            .session-id-display {
+                font-size: 0.8em;
+            }
+            
+            .btn {
+                padding: 10px 16px;
+                font-size: 14px;
+            }
+            
+            .logout-icon {
+                width: 16px;
+                height: 16px;
+            }
+            
+            .content {
+                padding: 30px 20px;
+            }
+            
             .form-row {
                 grid-template-columns: 1fr;
             }
@@ -457,47 +627,65 @@
 
         /* Shell Section Styles */
         .shell-section {
+            position: fixed;            /* dock it */
+            left: 0;
+            right: 0;
+            bottom: 0;
+            z-index: 900;               /* below modal (1000), above page */
+            max-height: 60vh;
+            height: 40vh;
+            transform: translateY(0%);
+            transition: transform 0.25s ease, box-shadow 0.25s ease;
+            box-shadow: 0 -10px 25px rgba(0,0,0,0.25);
             background: #1e1e1e;
-            border-radius: 10px;
-            margin-top: 20px;
-            overflow: hidden;
-            border: 2px solid #333;
+            border-top: 2px solid #333;
         }
 
         .shell-header {
             background: #2d2d2d;
-            padding: 15px 20px;
+            padding: 8px 15px;
             display: flex;
             justify-content: space-between;
             align-items: center;
             border-bottom: 1px solid #444;
+            min-height: 40px;
         }
 
         .shell-header h3 {
             color: #00ff00;
             margin: 0;
             font-family: 'Courier New', monospace;
+            font-size: 0.9em;
         }
 
         .shell-controls {
             display: flex;
-            gap: 10px;
+            gap: 6px;
             align-items: center;
         }
 
         .shell-controls select {
-            padding: 8px 12px;
-            border-radius: 4px;
+            padding: 4px 8px;
+            border-radius: 3px;
             border: 1px solid #555;
             background: #333;
             color: white;
             font-family: inherit;
+            font-size: 0.8em;
+        }
+
+        .shell-controls .btn {
+            padding: 6px 10px;
+            font-size: 0.8em;
+            min-width: 35px;
+            text-align: center;
         }
 
         .shell-status {
-            padding: 10px 20px;
+            padding: 6px 15px;
             background: #333;
             border-bottom: 1px solid #444;
+            font-size: 0.8em;
         }
 
         .shell-status .status-text {
@@ -515,9 +703,10 @@
         }
 
         .shell-terminal {
-            height: 400px;
+            height: calc(100% - 90px);
             display: flex;
             flex-direction: column;
+            overflow: hidden;
         }
 
         .shell-output {
@@ -525,18 +714,20 @@
             background: #000000;
             color: #00ff00;
             font-family: 'Courier New', monospace;
-            font-size: 14px;
-            line-height: 1.4;
-            padding: 15px;
+            font-size: 0.75em;
+            line-height: 1.2;
+            padding: 10px;
             overflow-y: auto;
             white-space: pre-wrap;
             word-wrap: break-word;
         }
 
         .shell-input-container {
-            padding: 15px;
+            padding: 8px 10px;
             background: #1a1a1a;
             border-top: 1px solid #444;
+            flex-shrink: 0;
+            max-height: 50px;
         }
 
         .shell-input-container input {
@@ -544,11 +735,12 @@
             background: #000000;
             color: #00ff00;
             border: 1px solid #555;
-            padding: 10px 15px;
+            padding: 6px 10px;
             font-family: 'Courier New', monospace;
-            font-size: 14px;
+            font-size: 0.8em;
             outline: none;
-            border-radius: 4px;
+            border-radius: 3px;
+            box-sizing: border-box;
         }
 
         .shell-input-container input:focus {
@@ -559,6 +751,55 @@
             opacity: 0.6;
             cursor: not-allowed;
         }
+
+        /* Add padding to body when shell is open to prevent content overlap */
+        body.shell-open {
+            padding-bottom: 40vh;
+        }
+
+        /* Mobile tweaks */
+        @media (max-width: 768px) {
+            .shell-section {
+                height: 50vh;
+                max-height: 70vh;
+            }
+            .shell-collapsed {
+                transform: translateY(calc(100% - 42px));
+            }
+            body.shell-open {
+                padding-bottom: 50vh;
+            }
+        }
+
+        /* Footer Disclaimer */
+        .footer-disclaimer {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            padding: 8px 20px;
+            background: rgba(0, 0, 0, 0.7);
+            text-align: center;
+            z-index: 100;
+        }
+
+        .disclaimer-content {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .disclaimer-content p {
+            margin: 2px 0;
+            font-size: 0.7em;
+            color: rgba(255, 255, 255, 0.6);
+            line-height: 1.2;
+        }
+
+        .disclaimer-content p:first-child {
+            font-weight: 600;
+            font-size: 0.75em;
+            color: rgba(255, 255, 255, 0.7);
+        }
     </style>
 </head>
 <body>
@@ -566,19 +807,20 @@
         <div class="header">
             <div style="display: flex; justify-content: space-between; align-items: center;">
                 <div>
-                    <h1>📦 Container Management</h1>
-                    <p>Manage your GPU containers and launch VS Code sessions</p>
+                    <h1>Container Management</h1>
+                    <p>Manage your GPU containers and launch Jupyter Notebook sessions</p>
                 </div>
                 <div style="display: flex; flex-direction: column; gap: 10px; align-items: flex-end;">
-                    <div id="session-info" style="background: rgba(255,255,255,0.2); padding: 10px; border-radius: 8px; font-size: 0.9em; margin-bottom: 5px;">
-                        <strong>Session ID:</strong> <span id="session-id-display">Loading...</span>
+                    <div class="session-info">
+                        <strong>Session ID:</strong> <span class="session-id-display" id="session-id-display">Loading...</span>
                     </div>
                     <div style="display: flex; gap: 10px; align-items: center;">
-                        <button onclick="cleanupAllPorts()" class="btn btn-warning" style="font-size: 0.9em; padding: 8px 16px;">
+                        <button onclick="cleanupAllPorts()" class="btn btn-warning">
                             🧹 Cleanup Ports
                         </button>
-                        <button onclick="logout()" class="btn btn-secondary" style="font-size: 0.9em; padding: 8px 16px;">
-                            🚪 Logout
+                        <button onclick="logout()" class="btn btn-secondary">
+                            <i class="fas fa-sign-out-alt logout-icon"></i>
+                            Logout
                         </button>
                     </div>
                 </div>
@@ -590,7 +832,9 @@
 
             <!-- New Container Form -->
             <div class="new-container-form">
-                <h3>🚀 Create New Container</h3>
+                <h3>Create New Container</h3>
+                <p>Create a new container to launch a Jupyter Notebook session. Please refresh the page after creating a new container.</p>
+                <br>
                 <form id="new-container-form">
                     <div class="form-row">
                         <div class="form-group">
@@ -614,7 +858,9 @@
                             </select>
                         </div>
                     </div>
-                    <button type="submit" class="btn">Create Container</button>
+                    <button type="submit" class="btn btn-success">
+                        Create
+                    </button>
                 </form>
             </div>
 
@@ -641,12 +887,13 @@
         };
 
         let currentSessionId = null;
+        let shellActive = false;
 
         // Session management functions
         function showSessionInfo() {
             const sessionIdDisplay = document.getElementById('session-id-display');
             if (currentSessionId) {
-                sessionIdDisplay.textContent = currentSessionId.substring(0, 8) + '...';
+                sessionIdDisplay.textContent = currentSessionId;
                 sessionIdDisplay.title = currentSessionId;
             } else {
                 sessionIdDisplay.textContent = 'No Session';
@@ -871,11 +1118,17 @@
                     </div>
                     <div class="actions">
                         ${container.status.toLowerCase().includes('up') ? 
-                            `<button class="btn btn-success" onclick="launchJupyter('${container.name}')">🌐 Launch Jupyter</button>` :
+                            `<button class="btn btn-success" onclick="launchJupyter('${container.name}')">
+                                <img src="{{ url_for('static', filename='jupyter.svg.png') }}" alt="Jupyter" class="action-icon">
+                                Launch Jupyter
+                            </button>` :
                             `<button class="btn" onclick="startContainer('${container.name}')">▶️ Start</button>`
                         }
-                        <button class="btn btn-secondary" onclick="openShell('${container.name}')">🔧 Open Shell</button>
-                                                    <button class="btn btn-danger" onclick="removeContainer('${container.name}')">🗑️ Remove</button>
+                        <button class="btn btn-secondary" onclick="openShell('${container.name}')">
+                            <img src="{{ url_for('static', filename='shell.jpg') }}" alt="Shell" class="action-icon">
+                            Open Shell
+                        </button>
+                        <button class="btn btn-danger" onclick="removeContainer('${container.name}')">🗑️ Remove</button>
                     </div>
                 </div>
             `).join('');
@@ -886,26 +1139,26 @@
             showProgressModal();
             
             // Simulate progress steps with longer, more realistic timing
-            setTimeout(() => addProgressStep('🛑 Stopping any running Jupyter processes...', 'pending'), 500);
-            setTimeout(() => updateProgressStep('🛑 Stopping any running Jupyter processes...', 'completed'), 2000);
+            setTimeout(() => addProgressStep('Stopping any running Jupyter processes...', 'pending'), 500);
+            setTimeout(() => updateProgressStep('Stopping any running Jupyter processes...', 'completed'), 2000);
             
-            setTimeout(() => addProgressStep('📦 Starting container...', 'pending'), 2100);
-            setTimeout(() => updateProgressStep('📦 Starting container...', 'completed'), 3500);
+            setTimeout(() => addProgressStep('Starting container...', 'pending'), 2100);
+            setTimeout(() => updateProgressStep('Starting container...', 'completed'), 3500);
             
-            setTimeout(() => addProgressStep('🔍 Finding container ID...', 'pending'), 3600);
-            setTimeout(() => updateProgressStep('🔍 Finding container ID...', 'completed'), 4500);
+            setTimeout(() => addProgressStep('Finding container ID...', 'pending'), 3600);
+            setTimeout(() => updateProgressStep('Finding container ID...', 'completed'), 4500);
             
-            setTimeout(() => addProgressStep('🎯 Selecting optimal GPU based on availability...', 'pending'), 4600);
-            setTimeout(() => updateProgressStep('🎯 Selecting optimal GPU based on availability...', 'completed'), 6000);
+            setTimeout(() => addProgressStep('Selecting optimal GPU based on availability...', 'pending'), 4600);
+            setTimeout(() => updateProgressStep('Selecting optimal GPU based on availability...', 'completed'), 6000);
             
-            setTimeout(() => addProgressStep('📁 Setting up workspace and environment...', 'pending'), 6100);
-            setTimeout(() => updateProgressStep('📁 Setting up workspace and environment...', 'completed'), 8000);
+            setTimeout(() => addProgressStep('Setting up workspace and environment...', 'pending'), 6100);
+            setTimeout(() => updateProgressStep('Setting up workspace and environment...', 'completed'), 8000);
             
-            setTimeout(() => addProgressStep('🌐 Starting Jupyter with authentication disabled...', 'pending'), 8100);
-            setTimeout(() => updateProgressStep('🌐 Starting Jupyter with authentication disabled...', 'completed'), 10000);
+            setTimeout(() => addProgressStep('Starting Jupyter with authentication disabled...', 'pending'), 8100);
+            setTimeout(() => updateProgressStep('Starting Jupyter with authentication disabled...', 'completed'), 10000);
             
-            setTimeout(() => addProgressStep('🔗 Setting up port forwarding...', 'pending'), 10100);
-            setTimeout(() => updateProgressStep('🔗 Setting up port forwarding...', 'completed'), 12000);
+            setTimeout(() => addProgressStep('Setting up port forwarding...', 'pending'), 10100);
+            setTimeout(() => updateProgressStep('Setting up port forwarding...', 'completed'), 12000);
             
             setTimeout(() => addProgressStep('✅ Finalizing Jupyter setup...', 'pending'), 12100);
             setTimeout(() => updateProgressStep('✅ Finalizing Jupyter setup...', 'completed'), 14000);
@@ -932,7 +1185,7 @@
                     const selectedGpu = result.selected_gpu || 0;
                     
                     // Update the GPU selection step with the actual GPU number
-                    updateProgressStep(`🎯 Selected GPU ${selectedGpu} based on lowest utilization`, 'completed');
+                    updateProgressStep(`Selected GPU ${selectedGpu} based on lowest utilization`, 'completed');
                     
                     let alertMessage = `Jupyter Notebook launched successfully! <a href="${jupyterUrl}" target="_blank" class="btn btn-success" style="margin-left: 10px;">🌐 Open Jupyter</a>`;
                     
@@ -941,7 +1194,7 @@
                         <strong>✅ No Authentication Required:</strong> 
                         <br><small style="color: #155724;">Jupyter is running without authentication. You can access it directly!</small>
                         <br><small style="color: #155724;">💡 Tip: Create new notebooks or upload existing ones.</small>
-                        <br><small style="color: #155724;">🎯 Using GPU ${selectedGpu} (selected based on lowest utilization)</small>
+                        <br><small style="color: #155724;">Using GPU ${selectedGpu} (selected based on lowest utilization)</small>
                     </div>`;
                     
                     showAlert(alertMessage, 'success');
@@ -1051,8 +1304,8 @@
             // Show the shell section
             shellSection.style.display = 'block';
             
-            // Scroll to shell section
-            shellSection.scrollIntoView({ behavior: 'smooth' });
+            // Add body padding to prevent content overlap
+            document.body.classList.add('shell-open');
         }
 
         function showAlert(message, type) {
@@ -1166,7 +1419,6 @@
 
         // Shell functionality
         let socket = null;
-        let shellActive = false;
         let containers = [];
 
         // Initialize Socket.IO
@@ -1267,6 +1519,7 @@
                     });
                 }
                 document.getElementById('shellSection').style.display = 'none';
+                document.body.classList.remove('shell-open'); // Remove body padding
             });
             
             // Shell input handler
@@ -1287,7 +1540,7 @@
     <div id="progressModal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
-                <h3>🚀 Launching Jupyter</h3>
+                <h3>Launching Jupyter</h3>
                 <span class="close" onclick="hideProgressModal()">&times;</span>
             </div>
             <div class="modal-body">
@@ -1301,15 +1554,15 @@
     <!-- Interactive Shell Section -->
     <div class="shell-section" id="shellSection" style="display: none;">
         <div class="shell-header">
-            <h3>🐚 Interactive Shell</h3>
+            <h3>Interactive Shell</h3>
             <div class="shell-controls">
                 <select id="shellContainerSelect" class="form-control">
                     <option value="">Host Shell</option>
                 </select>
-                <button id="startShellBtn" class="btn btn-success">Start Shell</button>
-                <button id="stopShellBtn" class="btn btn-danger" disabled>Stop Shell</button>
-                <button id="clearShellBtn" class="btn btn-primary">Clear</button>
-                <button id="closeShellBtn" class="btn btn-secondary">Close Shell</button>
+                <button id="startShellBtn" class="btn btn-success" title="Start Shell">▶️</button>
+                <button id="stopShellBtn" class="btn btn-danger" disabled title="Stop Shell">⏹️</button>
+                <button id="clearShellBtn" class="btn btn-primary" title="Clear">🗑️</button>
+                <button id="closeShellBtn" class="btn btn-secondary" title="Close Shell">☠️</button>
             </div>
         </div>
         
@@ -1322,6 +1575,15 @@
             <div class="shell-input-container">
                 <input type="text" id="shellInput" placeholder="Enter command..." disabled>
             </div>
+        </div>
+    </div>
+
+    <!-- Footer Disclaimer -->
+    <div class="footer-disclaimer">
+        <div class="disclaimer-content">
+            <p>🔬 Research Prototype</p>
+            <p>This system represents a personal exploration of GPU server automation and container management.</p>
+            <p>Developed independently for educational purposes.</p>
         </div>
     </div>
 </body>
